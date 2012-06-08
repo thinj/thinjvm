@@ -462,4 +462,19 @@ const methodInClass* getVirtualMethodEntryByLinkId(jobject jref, u2 linkId);
  */
 void invokeCommon(const methodInClass* mic, BOOL returnFromVM);
 
+/**
+ * This method returns the classId of the build-in dependency identified by libref
+ * \param libref Identifies the dependency
+ * \return The corresponding class Id or no return at all, if no match
+ */
+u2 getClassBuildinDependecy(BuildinDependency_e libref);
+
+/**
+ * This method returns the linkId of the build-in dependency identified by libref
+ * \param libref Identifies the dependency
+ * \return The corresponding linkId or no return at all, if no match
+ */
+u2 getMemberBuildinDependecy(BuildinDependency_e libref);
+
+
 #endif /* CONSTANTPOOL_H_ */

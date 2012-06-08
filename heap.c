@@ -21,13 +21,6 @@ static void dumpFreeList(void);
 void dumpHeap(void);
 static u2 requestedSize = 0;
 
-/**
- * VALIDATE_HEAP_LISTS will validate the heap whenever executed. Undefine it
- * for speed optimization only - if speed isn't necessary let it stay, since
- * it will provide runtime checks of heap sanity.
- */
-//#define VALIDATE_HEAP_LISTS CALL(validateHeapLists(__LINE__))
-#define VALIDATE_HEAP_LISTS
 
 // internal forward declaration:
 static void markObjects(u1 mark, stackable* memory, size_t length);
@@ -47,6 +40,14 @@ u1 heap[HEAP_SIZE];
  * \param p The element to free
  */
 static void heapFree(heapElement* p);
+
+#if 0
+/**
+ * VALIDATE_HEAP_LISTS will validate the heap whenever executed. Undefine it
+ * for speed optimization only - if speed isn't necessary let it stay, since
+ * it will provide runtime checks of heap sanity.
+ */
+#define VALIDATE_HEAP_LISTS CALL(validateHeapLists(__LINE__))
 
 /**
  * This method validates the indicated heap list
@@ -92,6 +93,9 @@ static void validateHeapLists(int lineNumber) {
 	CALL(validateList(lineNumber, usedList, "usedList", FALSE));
 	END;
 }
+#else
+#define VALIDATE_HEAP_LISTS
+#endif
 
 // The number of mark and sweep GCs:
 int markAndSweepCount = 0;

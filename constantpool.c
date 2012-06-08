@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include "console.h"
 #include "constantpool.h"
+#include "instructions.h"
 #include "frame.h"
 #include "heap.h"
 #include "trace.h"
@@ -123,7 +124,7 @@ BOOL is_S_SubClassing_T(u2 classId_S, u2 classId_T) {
 	BOOL subclassing = FALSE;
 
 	while (!subclassing && classId_S != 0) {
-		classInstanceInfoDef* class_S = getClassInfo(classId_S);
+		const classInstanceInfoDef* class_S = getClassInfo(classId_S);
 		subclassing = class_S->superClassId == classId_T;
 		if (!subclassing) {
 			// Recurse up through super classes:
@@ -181,21 +182,21 @@ CLASS_TYPE convertArrayType(ARRAY_TYPE atyp) {
 	CLASS_TYPE ct;
 	if (atyp == T_REFERENCE) {
 		ct = CT_OBJECT_ARRAY;
-	} else if (atyp == CT_BOOLEAN_ARRAY) {
+	} else if (atyp == (ARRAY_TYPE) CT_BOOLEAN_ARRAY) {
 		ct = CT_BOOLEAN_ARRAY;
-	} else if (atyp == CT_CHAR_ARRAY) {
+	} else if (atyp == (ARRAY_TYPE) CT_CHAR_ARRAY) {
 		ct = CT_CHAR_ARRAY;
-	} else if (atyp == CT_FLOAT_ARRAY) {
+	} else if (atyp == (ARRAY_TYPE) CT_FLOAT_ARRAY) {
 		ct = CT_FLOAT_ARRAY;
-	} else if (atyp == CT_DOUBLE_ARRAY) {
+	} else if (atyp == (ARRAY_TYPE) CT_DOUBLE_ARRAY) {
 		ct = CT_DOUBLE_ARRAY;
-	} else if (atyp == CT_BYTE_ARRAY) {
+	} else if (atyp == (ARRAY_TYPE) CT_BYTE_ARRAY) {
 		ct = CT_BYTE_ARRAY;
-	} else if (atyp == CT_SHORT_ARRAY) {
+	} else if (atyp == (ARRAY_TYPE) CT_SHORT_ARRAY) {
 		ct = CT_SHORT_ARRAY;
-	} else if (atyp == CT_INT_ARRAY) {
+	} else if (atyp == (ARRAY_TYPE) CT_INT_ARRAY) {
 		ct = CT_INT_ARRAY;
-	} else if (atyp == CT_LONG_ARRAY) {
+	} else if (atyp == (ARRAY_TYPE) CT_LONG_ARRAY) {
 		ct = CT_LONG_ARRAY;
 	} else {
 		consout("Unknown ARRAY_TYPE: %d\n", atyp);
@@ -346,17 +347,14 @@ const methodInClass* getVirtualMethodEntryByLinkId(jobject jref, u2 linkId) {
  * \return The matching method reference. No return is made if no match
  */
 static const memberReference* lookupMethodReference(u2 classId, u2 constantPoolIndex) {
-	//	consout("Changed: %s:%d\n", __FILE__, __LINE__);
 	VALIDATE_CLASS_ID(classId);
+
 	const memberReference* const methodReferences = allConstantPools[classId].methodReferences;
 	size_t length = allConstantPools[classId].numberOfMethodReferences;
 
-	int i;
 	const memberReference* res = NULL;
-	for (i = 0; i < length && res == NULL; i++) {
-		if (methodReferences[i].index == constantPoolIndex) {
-			res = &methodReferences[i];
-		}
+	if (constantPoolIndex < length) {
+		res = &methodReferences[constantPoolIndex];
 	}
 
 	return res;

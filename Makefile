@@ -1,6 +1,7 @@
 IDIR =.
 CC=gcc
 CFLAGS=-I$(IDIR) -Wall -pg
+#CFLAGS=-I$(IDIR) -Wall
 
 ODIR=obj
 LDIR =../lib

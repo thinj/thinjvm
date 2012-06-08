@@ -34,5 +34,10 @@ extern const insWithOpcode allInstructions[];
  */
 void throwOutOfMemoryError(void);
 
+/**
+ * This method throws a Null Pointer Exception
+ */
+void throwNullPointerException(void);
+
 
 #endif /* INSTRUCTIONS_H_ */
