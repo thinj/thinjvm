@@ -634,13 +634,12 @@ static jobject allocJavaLangString(const char* value) {
 	return stringObject;
 }
 
-INSTRUCTION(f_ldc) {
-	u1 constantPoolIndex = getU1FromCode();
-	// Look up value (int, float or String) from within const pool:
-	constantDef constant;
-	getConstant(constantPoolIndex, &constant);
-
-	if (constant.type == CONSTANT_INTEGER) {
+static void common_ldc(u2 constantPoolIndex)
+{
+    // Look up value (int, float or String) from within const pool:
+    constantDef constant;
+    getConstant(constantPoolIndex, &constant);
+    if (constant.type == CONSTANT_INTEGER) {
 		operandStackPushJavaInt(constant.value.jrenameint);
 	} else if (constant.type == CONSTANT_STRING) {
 		jobject str = allocJavaLangString(constant.value.string);
@@ -654,6 +653,14 @@ INSTRUCTION(f_ldc) {
 		consout("Unsupported type: %d\n", constant.type);
 		jvmexit(1);
 	}
+}
+
+INSTRUCTION(f_ldc) {
+    common_ldc(getU1FromCode());
+}
+
+INSTRUCTION(f_ldc_w) {
+    common_ldc(getU2FromCode());
 }
 
 INSTRUCTION(f_vreturn) {
