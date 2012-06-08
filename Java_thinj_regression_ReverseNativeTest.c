@@ -6,7 +6,7 @@
  */
 
 #include "jni.h"
-#include "davsdu.h"
+//#include "davsdu.h"
 #include "console.h"
 
 #ifdef CLASS_ID_thinj_regression_ReverseNativeStaticTest
