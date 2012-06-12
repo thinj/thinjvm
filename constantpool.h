@@ -124,8 +124,8 @@ typedef struct __lineNumberInfoDef {
 } lineNumberInfoDef;
 
 typedef struct __classInstanceInfoDef {
-	// The class id of the class:
-	u2 classId; // classId == 0 <=> it's java.lang.Object
+//	// The class id of the class:
+//	u2 classId; // classId == 0 <=> it's java.lang.Object
 	// The class id of the super class:
 	u2 superClassId; // if superClassId == 0 => it's java.lang.Object
 	// The size of an instance
@@ -350,13 +350,13 @@ void getClassSize(u2 classId, u2* size);
  */
 void getClassReference(u2 constantPoolIndex, u2* classId);
 
-/**
- * This method looks up an array type and retrieves the array info
- * \param classId The class id for the array type class
- * \param size The size in bytes of a single array element
- * \param elementClassId The class id of a single array element
- */
-void getArrayInfo(u2 classId, u2* elementClassId, size_t* size);
+///**
+// * This method looks up an array type and retrieves the array info
+// * \param classId The class id for the array type class
+// * \param size The size in bytes of a single array element
+// * \param elementClassId The class id of a single array element
+// */
+//void getArrayInfo(u2 classId, u2* elementClassId, size_t* size);
 
 /**
  * This method returns the class id of the first class having the indicated type.

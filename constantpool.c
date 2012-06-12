@@ -61,23 +61,22 @@ static u2 getSuperClass(u2 classId) {
 
 u2 getArrayClassIdForElementClassId(u2 elementClassId) {
 	BEGIN;
-	const classInstanceInfoDef* classInfo = NULL;
 	int i;
-	for (i = 0; classInfo == NULL && i < numberOfAllClassInstanceInfo; i++) {
+	for (i = 0; i < numberOfAllClassInstanceInfo; i++) {
 		if (allClassInstanceInfo[i].elementClassId == elementClassId
 				&& allClassInstanceInfo[i].type == CT_OBJECT_ARRAY) {
-			classInfo = &allClassInstanceInfo[i];
+			break;
 		}
 	}
 
-	if (classInfo == NULL) {
+	if (i >= numberOfAllClassInstanceInfo) {
 		consout("Array Class for element id = %d not found\n", elementClassId);
 		DUMP_STACKTRACE("class element id");
 		jvmexit(1);
 	}
 
 	END;
-	return classInfo->classId;
+	return i;
 
 }
 
@@ -586,21 +585,22 @@ void getClassReference(u2 constantPoolIndex, u2* classId) {
 	}
 }
 
-/**
- * This method looks up an array type and retrieves the array info
- * \param classId The class id for the array type class
- * \param size The size in bytes of a single array element
- * \param elementClassId The class id of a single array element
- */
-void getArrayInfo(u2 classId, u2* elementClassId, size_t* size) {
-	BEGIN;
-
-	const classInstanceInfoDef* classInfo = getClassInfo(classId);
-
-	*size = classInfo->elementSize;
-	*elementClassId = classInfo->classId;
-	END;
-}
+///**
+// * This method looks up an array type and retrieves the array info
+// * \param classId The class id for the array type class
+// * \param size The size in bytes of a single array element
+// * \param elementClassId The class id of a single array element
+// */
+//void getArrayInfo(u2 classId, u2* elementClassId, size_t* size) {
+//	BEGIN;
+//
+//	const classInstanceInfoDef* classInfo = getClassInfo(classId);
+//
+//	*size = classInfo->elementSize;
+//	//*elementClassId = classInfo->classId;
+//	*elementClassId = classId;
+//	END;
+//}
 
 BOOL isObjectArray(u2 classId) {
 	return getClassInfo(classId)->type == CT_OBJECT_ARRAY ? TRUE : FALSE;
@@ -626,15 +626,14 @@ u2 getArrayElementClassId(u2 classId) {
 u2 getClassIdForClassType(CLASS_TYPE type) {
 	int i;
 	u2 classId;
-	BOOL found = FALSE;
-	for (i = 0; i < numberOfAllClassInstanceInfo && !found; i++) {
+	for (i = 0; i < numberOfAllClassInstanceInfo; i++) {
 		if (type == allClassInstanceInfo[i].type) {
-			found = TRUE;
-			classId = allClassInstanceInfo[i].classId;
+			classId = i;
+			break;
 		}
 	}
 
-	if (!found) {
+	if (i >= numberOfAllClassInstanceInfo) {
 		consout("Failed to look up type=%d\n", type);
 		jvmexit(1);
 	}
