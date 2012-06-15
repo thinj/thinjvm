@@ -66,7 +66,7 @@ typedef void (*nativeJumpTableEntry)(void);
 
 typedef struct __fieldInClass {
 	// The containing class
-	u2 classId;
+	// u2 classId;
 	// The id of the member
 	u2 linkId;
 	u2 address;
