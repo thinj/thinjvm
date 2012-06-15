@@ -14,9 +14,9 @@
 
 typedef struct __memberReference {
 	// The class id of the referencing class:
-	u2 referencingClassId;
+	// u2 referencingClassId;
 	// The constant pool index in the referencing class:
-	u2 index;
+	// u2 index;
 	// The referenced class:
 	u2 referencedClassId;
 	// The reference to the member
@@ -182,6 +182,9 @@ typedef struct __BuildinMemberDependency_s {
 } BuildinMemberDependency_s;
 
 typedef struct __constantPool {
+	//----------------------------------------------------
+    // Method Info
+	//----------------------------------------------------
 	// All method references in this constant pool:
 	const memberReference* const methodReferences;
 
@@ -193,6 +196,21 @@ typedef struct __constantPool {
 
 	// The number of methods:
 	const size_t numberOfMethods;
+
+	//----------------------------------------------------
+    // Field Info
+	//----------------------------------------------------
+	// All field references in this constant pool:
+	const memberReference* const fieldReferences;
+
+	// The number of field references:
+	const size_t numberOfFieldReferences;
+
+	// All fields in class:
+	const fieldInClass* const fields;
+
+	// The number of fields:
+	const size_t numberOfFields;
 } constantPool;
 
 /**
@@ -231,12 +249,6 @@ extern const methodInClass const allMethodsInAllClasses[];
 // Native jump table:
 extern const nativeJumpTableEntry const nativeJumpTable[];
 extern const u2 nativeJumpTableSize;
-
-extern const u2 numberOfAllFieldReferences;
-extern const memberReference const allFieldReferences[];
-
-extern const u2 numberOfAllFields;
-extern const fieldInClass const allFields[];
 
 extern const u2 numberOfAllIntegerConstantReferences;
 extern const integerConstantReference const allIntegerConstantReferences[];

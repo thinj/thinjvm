@@ -460,47 +460,40 @@ const methodInClass* getStaticMethodEntry(u2 classId, u2 cp_index) {
 
 static void getFieldEntry(u2 index, u2* address, u1* size) {
 	int i;
-	BOOL found = FALSE;
 	int linkId;
 	int referencedClassId;
-	// stdPrintfRepaint("Lookup %d %d", (int) index, context.classIndex);
-	for (i = 0; i < numberOfAllFieldReferences && !found; i++) {
-		//		stdPrintfRepaint("%d %d", (int) allFieldReferences[i].index,
-		//				(int) allFieldReferences[i].referencingClassId);
-		if (allFieldReferences[i].index == index && allFieldReferences[i].referencingClassId
-				== context.classIndex) {
-			linkId = allFieldReferences[i].linkId;
-			referencedClassId = allFieldReferences[i].referencedClassId;
-			found = TRUE;
-		}
-	}
-	//	stdPrintfRepaint("Found %s, linkid=%d", found ? "Found" : "Not found", linkId);
+
+	const constantPool* cpool = &allConstantPools[context.classIndex];
+    const memberReference* mref = &cpool->fieldReferences[index];
+
+	linkId = mref->linkId;
+	referencedClassId = mref->referencedClassId;
+
 
 	// Now the linkId is established...
-	int fieldId;
-	if (found) {
-		found = FALSE;
-		while (!found) {
-			for (i = 0; i < numberOfAllFields && !found; i++) {
-				if (allFields[i].classId == referencedClassId && allFields[i].linkId == linkId) {
-					found = TRUE;
-					fieldId = i;
-				}
+	const fieldInClass* fic = NULL;
+	while (fic == NULL) {
+		cpool = &allConstantPools[referencedClassId];
+	    const fieldInClass* allFields = cpool->fields;
+	    size_t numberOfAllFields = cpool->numberOfFields;
+		for (i = 0; i < numberOfAllFields && fic == NULL; i++) {
+			// TODO Optimization candidate:
+			if (allFields[i].linkId == linkId) {
+				fic = &allFields[i];
 			}
-			if (!found) {
-				if (referencedClassId != JAVA_LANG_OBJECT_CLASS_ID) {
-					// Look in super class:
-					referencedClassId = getSuperClass(referencedClassId);
-				} else {
-					// Already in java.lang.Object; symbol not found.
-					break;
-				}
+		}
+		if (fic == NULL) {
+			if (referencedClassId != JAVA_LANG_OBJECT_CLASS_ID) {
+				// Look in super class:
+				referencedClassId = getSuperClass(referencedClassId);
+			} else {
+				// Already in java.lang.Object; symbol not found.
+				break;
 			}
 		}
 	}
 
-	if (found) {
-		const fieldInClass* fic = &allFields[fieldId];
+	if (fic != NULL) {
 		*address = fic->address;
 		*size = fic->size;
 		//				printf("addr = %d, size = %d\n", *address, *size);
@@ -510,6 +503,57 @@ static void getFieldEntry(u2 index, u2* address, u1* size) {
 		jvmexit(1);
 	}
 }
+
+//static void obsolete_getFieldEntry(u2 index, u2* address, u1* size) {
+//	int i;
+//	BOOL found = FALSE;
+//	int linkId;
+//	int referencedClassId;
+//
+//	for (i = 0; i < numberOfAllFieldReferences && !found; i++) {
+//		if (allFieldReferences[i].index == index && allFieldReferences[i].referencingClassId
+//				== context.classIndex) {
+//			linkId = allFieldReferences[i].linkId;
+//			referencedClassId = allFieldReferences[i].referencedClassId;
+//			found = TRUE;
+//		}
+//	}
+//	//	stdPrintfRepaint("Found %s, linkid=%d", found ? "Found" : "Not found", linkId);
+//
+//	// Now the linkId is established...
+//	int fieldId;
+//	if (found) {
+//		found = FALSE;
+//		while (!found) {
+//			for (i = 0; i < numberOfAllFields && !found; i++) {
+//				if (allFields[i].classId == referencedClassId && allFields[i].linkId == linkId) {
+//					found = TRUE;
+//					fieldId = i;
+//				}
+//			}
+//			if (!found) {
+//				if (referencedClassId != JAVA_LANG_OBJECT_CLASS_ID) {
+//					// Look in super class:
+//					referencedClassId = getSuperClass(referencedClassId);
+//				} else {
+//					// Already in java.lang.Object; symbol not found.
+//					break;
+//				}
+//			}
+//		}
+//	}
+//
+//	if (found) {
+//		const fieldInClass* fic = &allFields[fieldId];
+//		*address = fic->address;
+//		*size = fic->size;
+//		//				printf("addr = %d, size = %d\n", *address, *size);
+//	} else {
+//		consout("Failed to look up field entry: index = %d, classId=%d\n", index,
+//				context.classIndex);
+//		jvmexit(1);
+//	}
+//}
 
 void getStaticFieldEntry(u2 index, u2* address, u1* size) {
 	getFieldEntry(index, address, size);
