@@ -32,7 +32,9 @@ static heapElement* freeList;
 static heapElement* usedList;
 
 // The heap:
-u1 heap[HEAP_SIZE];
+u1 * heap;
+// The size of the heap:
+size_t HEAP_SIZE;
 
 // forwards:
 /**
@@ -100,10 +102,12 @@ static void validateHeapLists(int lineNumber) {
 // The number of mark and sweep GCs:
 int markAndSweepCount = 0;
 
-void heapInit(void) {
+void heapInit(void* _heap, size_t heapSize) {
 	BEGIN;
 	usedList = NULL;
 
+	heap = _heap;
+	HEAP_SIZE = heapSize;
 	freeList = (heapElement*) &heap[0];
 	freeList->prev = NULL;
 	freeList->next = NULL;
@@ -559,7 +563,6 @@ void _validateStackables(stackable* memory, size_t length) {
 					consout("pc: %04x\n", context.programCounter);
 					DUMP_STACKTRACE("yyyMagic");
 					jvmexit(1);
-					exit(1);
 				}
 			}
 		}

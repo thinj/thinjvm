@@ -82,8 +82,10 @@ void singleStep(void);
 
 /**
  * This method will reset the VM. Shall be called once upon program start.
+ * \param heap A pointer to the memory area where the heap will be placed
+ * \param heapSize The size of the heap area
  */
-void resetVM(void);
+void resetVM(void* heap, size_t heapSize);
 
 /*
  * This method dumps a stack trace of current (thread)..

@@ -14,7 +14,7 @@
 #include "trace.h"
 
 #define VALIDATE_CLASS_ID(X) \
-	if (X < 0 || X >= numberOfAllClassInstanceInfo) { \
+	if (X >= numberOfAllClassInstanceInfo) { \
 		consout("Class id = %d out of range (0-%d)\n", X, numberOfAllClassInstanceInfo); \
 		consout("PC=%04x\n", context.programCounter); \
 		DUMP_STACKTRACE("class id"); \

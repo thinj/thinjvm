@@ -14,7 +14,7 @@ JNIEXPORT jint JNICALL Java_java_lang_Throwable_getStackTraceElement(JNIEnv *env
 	contextDef savedContext = context;
 	int count = 0;
 	jint pc = -1;
-	while (context.framePointer >= 0) {
+	while (TRUE) {
 		if (count >= index || context.framePointer == 0) {
 			pc = context.programCounter - 1;
 			break;
@@ -30,7 +30,7 @@ JNIEXPORT jint JNICALL Java_java_lang_Throwable_getStackTraceElement(JNIEnv *env
 JNIEXPORT jint JNICALL Java_java_lang_Throwable_getStackTraceDepth(JNIEnv *env, jobject exception) {
 	contextDef savedContext = context;
 	jint count = 0;
-	while (context.framePointer >= 0) {
+	while (TRUE) {
 		count++;
 		if (context.framePointer == 0) {
 			break;

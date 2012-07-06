@@ -5,10 +5,8 @@
  *      Author: hammer
  */
 
-#include "config.h"
-
-#ifdef NO_STD_LIB
 #include <string.h>
+#include "config.h"
 #include "types.h"
 
 void *memcpy(void *s1, const void * s2, size_t n) {
@@ -137,8 +135,6 @@ int __modsi3(register int a, register int n) {
 	}
 	return modulus;
 }
-
-#endif // NO_STD_LIB
 
 #if JUST_TESTING
 #include "types.h"

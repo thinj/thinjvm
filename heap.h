@@ -104,8 +104,10 @@ jobject heapAllocObjectArray(jint count, u2 elementClassId);
 
 /**
  * This method initializes the heap
+ * \param heap A pointer to the memory area where the heap will be placed
+ * \param heapSize The size of the heap area
  */
-void heapInit(void);
+void heapInit(void* heap, size_t heapSize);
 
 /**
  * This method executes simple garbage collection using mark and sweep algorithm.

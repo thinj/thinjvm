@@ -13,8 +13,6 @@
 #include "types.h"
 #include "debugger.h"
 
-#define OUTCH(X) PUTCHAR(X)
-
 /**
  * This method prints a decimal int
  */
@@ -23,7 +21,7 @@ static void print_d(char prefix, size_t size, int value) {
 	int remaining_digits = 10;
 	BOOL in_number = FALSE;
 	if (value < 0) {
-		OUTCH('-');
+		thinj_putchar('-');
 		value = -value;
 		if (size) {
 			size--;
@@ -34,19 +32,19 @@ static void print_d(char prefix, size_t size, int value) {
 			in_number = TRUE;
 		}
 		if (value >= limit) {
-			OUTCH(value / limit + '0');
+			thinj_putchar(value / limit + '0');
 			value = value % limit;
 			in_number = TRUE;
 			if (size) {
 				size--;
 			}
 		} else if (in_number) {
-			OUTCH(value / limit + '0');
+			thinj_putchar(value / limit + '0');
 			if (size) {
 				size--;
 			}
 		} else if (size >= remaining_digits) {
-			OUTCH(prefix);
+			thinj_putchar(prefix);
 			size--;
 		}
 		remaining_digits--;
@@ -63,20 +61,20 @@ static void print_x(char prefix, size_t size, unsigned int value) {
 		if (value & (0xf << remaining_bits)) {
 			in_number = TRUE;
 			char ch = HEX_CHAR[(value >> remaining_bits) & 0x0f];
-			OUTCH(ch);
+			thinj_putchar(ch);
 			value -= value & (0xf << remaining_bits);
 			if (size) {
 				size--;
 			}
 		} else if (in_number) {
 			char ch = HEX_CHAR[(value >> remaining_bits) & 0x0f];
-			OUTCH(ch);
+			thinj_putchar(ch);
 			value -= value & (0xf << remaining_bits);
 			if (size) {
 				size--;
 			}
 		} else if (size > remaining_bits / 4) {
-			OUTCH(prefix);
+			thinj_putchar(prefix);
 			size--;
 		}
 	}
@@ -90,11 +88,11 @@ static void print_cp(char prefix, size_t size, char* cp) {
 	}
 
 	while (size-- > length) {
-		OUTCH(prefix);
+		thinj_putchar(prefix);
 	}
 
 	while (*cp) {
-		OUTCH(*cp);
+		thinj_putchar(*cp);
 		cp++;
 	}
 }
@@ -123,13 +121,13 @@ void consout(char * format, ...) {
 			if (*format == '%') {
 				state = BEGIN_FORMAT;
 			} else {
-				OUTCH(*format);
+				thinj_putchar(*format);
 			}
 			format++;
 			break;
 		case BEGIN_FORMAT:
 			if (*format == '%') {
-				OUTCH('%');
+				thinj_putchar('%');
 				state = SEEK;
 				format++;
 			} else {
@@ -195,7 +193,7 @@ void consout(char * format, ...) {
 				break;
 			}
 			default:
-				OUTCH('?');
+				thinj_putchar('?');
 				break;
 			}
 			state = SEEK;

@@ -192,7 +192,6 @@ BOOL isBreakpoint(codeIndex addr) {
 	return found;
 }
 #endif // USE_DEBUG
-
 /**
  *  By defining SINGLE_STEP as a macro we save a function call => faster code. Further, getU1FromCode has
  *  been forced in-line => faster code (according to profiling).
@@ -227,7 +226,7 @@ void execute(void) {
 	context.flags &= ~RETURN_FROM_VM;
 }
 
-void resetVM(void) {
+void resetVM(void* heap, size_t heapSize) {
 	// Thread reset:
 	context.programCounter = startAddress;
 	context.classIndex = startClassIndex;
@@ -243,7 +242,7 @@ void resetVM(void) {
 	}
 #endif // USE_DEBUG
 	// Initialize heap:
-	heapInit();
+	heapInit(heap, heapSize);
 
 	// initialize stack:
 	stack_init();

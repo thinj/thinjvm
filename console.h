@@ -14,5 +14,10 @@
  */
 void consout(char * format, ...);
 
+/**
+ * To be implemented by target platform code. Prints the supplied character on stdout
+ */
+
+void thinj_putchar(char ch);
 
 #endif /* CONSOLE_H_ */

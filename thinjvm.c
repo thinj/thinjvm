@@ -1,5 +1,5 @@
 /*
- * main.c
+ * thinjvm.c
  *
  *  Created on: Aug 22, 2010
  *      Author: hammer
@@ -10,11 +10,9 @@
 #include "debugger.h"
 #include "frame.h"
 #include "heap.h"
-#include "hardware.h"
 
-int main(int argc, char **argv) {
-	init_hardware();
-	resetVM();
+void thinjvm_run(void* heap, size_t heapSize) {
+	resetVM(heap, heapSize);
 
 	push_frame(0, startClassIndex, startAddress, TRUE);
 
@@ -26,6 +24,5 @@ int main(int argc, char **argv) {
 #endif
 
 	jvmexit(0);
-	return 0;
 }
 
