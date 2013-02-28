@@ -8,384 +8,253 @@
 #include <string.h>
 
 #include "types.h"
+#include "jarray.h"
 #include "console.h"
 #include "frame.h"
 #include "heap.h"
+#include "heaplist.h"
 #include "instructions.h"
 #include "debugger.h"
 #include "trace.h"
 #include "jni.h"
+#include "exceptions.h"
+#include "objectaccess.h"
 
 extern stackable staticMemory[];
 
-static jobject allocJavaLangString(const char* value);
+static const char* divisionByZeroMessage = "Division by zero";
 
-/**
- * This method allocates an instance of the specified object. No constructors are invoked.
-
- * \param classId Identifies the class to instantiate
-
- * \return The allocated object or null, if out of mem has been thrown
- */
-static jobject newObject(u2 classId) {
-	BEGIN;
-	u2 size;
-	getClassSize(classId, &size);
-
-	CALL(jobject jref = heapAllocObject(size, classId));
-
-	END;
-	return jref;
+static void inUndefinedInstruction(const char* file, int line) {
+	consout("%s:%d: Undefined instruction at 0x%04x\n", file, line, context.programCounter - 1);
+	jvmexit(1);
 }
 
-//#define __DEBUG(x ...)
-#define __DEBUG consout("%s(%s:%d): ", __FUNCTION__, __FILE__, __LINE__), consout
+void execute() {
+	// Instantiate static jump table:
+	static JUMP_TABLE;
 
-/**
- * This method looks up the exception handler for the exception. Note that program counter is used when
- * looking up the handler.
- *
- * \param containingClassId The class containing the code throwing the exception
- * \param exceptionClassId The exception thrown
- *
- * \return The found handler or NULL, if no handler for the exception.
- */
-const exceptionHandler* getExceptionHandler(u2 containingClassId, u2 exceptionClassId) {
-	int i;
-	const exceptionHandler* hit = NULL;
-	do {
-		containingClassId = context.classIndex;
-		// The tables expect PC to be incremented after the instruction:
-		codeIndex pc = context.programCounter - 1;
-		for (i = 0; i < numberOfAllExceptionHandersInAllClasses; i++) {
-			const exceptionHandler* p = NULL;
-			p = &(allExceptionHandersInAllClasses[i]);
+	/////////////////////////////////////////////////////////
+	// This is the point to go to when a new instruction shall be executed:
+	/////////////////////////////////////////////////////////
+	nextInstruction:
 
-			BOOL classOk = p->exceptionClassId == exceptionClassId;
-			if (!classOk) {
-				classOk = is_S_SubClassing_T(exceptionClassId, p->exceptionClassId);
-			}
-			if (p->classId == containingClassId && classOk && p->startPC <= pc && p->endPC > pc) {
-				hit = p;
-				break;
-			}
-		}
-		if (hit == NULL) {
-			if (context.framePointer > 0) {
-				pop_frame();
-			} else {
-				// No exception handler; return null:
-				break;
-			}
-		}
-	} while (hit == NULL);
+	HEAP_VALIDATE;
+	tryYield();
+	HEAP_VALIDATE;
 
-	return hit;
-}
-
-/**
- * This method throws an exception
- *
- * \param exception The exception to throw
- */
-static void throwException(jobject exception) {
-	// See VM Spec section 3.10:file:///tools/vmspec/Overview.doc.html#15494
-	// Get class id of exception:
-	u2 exceptionClassId = OBJECT_REF_TO_HEAP_ELEMENT(exception)->classId;
-	//__DEBUG("containing classId: %d\n", context.classIndex);
-	//__DEBUG("class id of exception: %d\n", (int) exceptionClassId);
-
-	contextDef contextCopy = context;
-	const exceptionHandler* p = getExceptionHandler(context.classIndex, exceptionClassId);
-
-	if (p != NULL) {
-		//__DEBUG("Found handler: %04x\n", p->handlerPC);
-		operandStackPushObjectRef(exception);
-		context.programCounter = p->handlerPC;
-	} else {
-		context = contextCopy;
-		consout("Uncaught exception, terminating thread: \n");
-		jvmexit(1);
+	if (context.flags & RETURN_FROM_VM) {
+		// Clear return flag: this is a one-shot:
+		context.flags &= ~RETURN_FROM_VM;
+		return;
 	}
-}
 
-/**
- * This method throws a Null Pointer Exception
- */
-void throwNullPointerException(void) {
-	jobject npe = newObject(getClassBuildinDependecy(NULL_POINTER_EXCEPTION_CLASS));
+	context.exceptionThrown = FALSE;
+	// Note! 'code' is u1[] and we have 256 entries in the array => no check needed
+	goto *jumpTable[code[context.programCounter++]];
 
-	operandStackPushObjectRef(npe);
-
-	call_instance_method(npe, getMemberBuildinDependecy(NULL_POINTER_EXCEPTION_CONSTRUCTOR));
-
-	throwException(npe);
-}
-
-/**
- * This method throws a Negative Array Size Exception
- */
-void throwNegativeArraySizeException() {
-	jobject npe = newObject(getClassBuildinDependecy(NEGATIVE_ARRAY_SIZE_EXCEPTION_CLASS));
-
-	operandStackPushObjectRef(npe);
-
-	call_instance_method(npe, getMemberBuildinDependecy(NEGATIVE_ARRAY_SIZE_EXCEPTION_CONSTRUCTOR));
-
-	throwException(npe);
-}
+	/////////////////////////////////////////////////////////
+	// Instructions BEGIN
+	/////////////////////////////////////////////////////////
 
 
-void throwArrayIndexOutOfBoundsException(jint index, jint arrayLength) {
-	jobject except = newObject(getClassBuildinDependecy(ARRAY_INDEX_OUT_OF_BOUNDS_EXCEPTION_CLASS));
+	IFINS(f_ifeq, operandStackPopJavaInt() == 0)
+	IFINS(f_ifne, operandStackPopJavaInt() != 0)
+	IFINS(f_ifgt, operandStackPopJavaInt() > 0)
+	IFINS(f_ifle, operandStackPopJavaInt() <= 0)
+	IFINS(f_iflt, operandStackPopJavaInt() < 0)
+	IFINS(f_ifge, operandStackPopJavaInt() >= 0)
+	IFINS(f_if_icmpeq, operandStackPopJavaInt() == operandStackPopJavaInt())
+	IFINS(f_if_icmpne, operandStackPopJavaInt() != operandStackPopJavaInt())
+	IFINS(f_if_acmpeq, operandStackPopObjectRef() == operandStackPopObjectRef())
+	IFINS(f_if_acmpne, operandStackPopObjectRef() != operandStackPopObjectRef())
+	// Note! Left is pushed first and popped last => the condition shall be 'inverted'
+	IFINS(f_if_icmple, operandStackPopJavaInt() >= operandStackPopJavaInt())
+	IFINS(f_if_icmplt, operandStackPopJavaInt() > operandStackPopJavaInt())
+	IFINS(f_if_icmpge, operandStackPopJavaInt() <= operandStackPopJavaInt())
+	IFINS(f_if_icmpgt, operandStackPopJavaInt() < operandStackPopJavaInt())
 
-	operandStackPushObjectRef(except);
-	operandStackPushJavaInt(index);
+	IFINS(f_ifnonnull, operandStackPopObjectRef() != NULL)
+	IFINS(f_ifnull, operandStackPopObjectRef() == NULL)
 
-	call_instance_method(except,
-			getMemberBuildinDependecy(ARRAY_INDEX_OUT_OF_BOUNDS_EXCEPTION_CONSTRUCTOR));
-
-	throwException(except);
-}
-
-void throwArithmeticException(const char* cause) {
-	jobject except = newObject(getClassBuildinDependecy(ARITHMETIC_EXCEPTION_CLASS));
-
-	operandStackPushObjectRef(except);
-	jobject jstr = allocJavaLangString(cause);
-	operandStackPushObjectRef(jstr);
-
-	call_instance_method(except, getMemberBuildinDependecy(ARITHMETIC_EXCEPTION_CONSTRUCTOR));
-
-	throwException(except);
-}
-
-void throwClassCastException(u2 classId_S, u2 classId_T) {
-	jobject exception = newObject(getClassBuildinDependecy(CLASS_CAST_EXCEPTION_CLASS));
-
-	operandStackPushObjectRef(exception);
-
-	call_instance_method(exception, getMemberBuildinDependecy(CLASS_CAST_EXCEPTION_CONSTRUCTOR));
-
-	throwException(exception);
-}
-
-void throwOutOfMemoryError() {
-	u2 classId = getClassBuildinDependecy(OUT_OF_MEMORY_ERROR_CLASS);
-	u2 memberId = getMemberBuildinDependecy(OUT_OF_MEMORY_ERROR_GET_INSTANCE);
-	call_static_method(classId, memberId);
-
-	// Pop exception:
-	jobject exception = operandStackPopObjectRef();
-
-	throwException(exception);
-}
-
-INSTRUCTION(f_athrow) {
+	IFINS(f_goto, TRUE)
+	//
+	//
+	INS_BEGIN(f_athrow){
 	// pop exception:
 	jobject exception = operandStackPopObjectRef();
 	if (exception == NULL) {
 		throwNullPointerException();
-	}
-	else {
-    	throwException(exception);
+	} else {
+		throwException(exception);
 	}
 }
+//
+INS_END
 
-INSTRUCTION(f_monitorenter) {
+INS_BEGIN(f_monitorenter) {
 	consout("f_monitorenter: not implemented\n");
 }
+INS_END
 
-INSTRUCTION(f_monitorexit) {
+INS_BEGIN(f_monitorexit) {
 	consout("f_monitorexit: not implemented\n");
 }
+INS_END
 
-INSTRUCTION(f_pop) {
-	pop();
+INS_BEGIN(f_pop) {
+	stackable op;
+	pop(&op);
 }
+INS_END
 
-INSTRUCTION(f_nop) {
-	// No-op!
+INS_BEGIN(f_pop2) {
+	// When pop'ing we exploit that a category 2 consists of two entries on the stack:
+	stackable op;
+	pop(&op);
+	pop(&op);
 }
+INS_END
 
-INSTRUCTION(f_new) {
-	BEGIN;
+INS_BEGIN(f_nop)
+// No-op!
+INS_END
+
+INS_BEGIN(f_new) {
 	u2 constantPoolIndex = getU2FromCode();
 	u2 classId;
 	getClassReference(constantPoolIndex, &classId);
 
-	CALL(jobject jref = newObject(classId));
+	jobject jref = newObject(classId);
 
 	if (jref != NULL) {
 		operandStackPushObjectRef(jref);
 	}
-	END;
 }
+INS_END
 
-/**
- * This method test if S is 'instanceof' T
- * \param classId_S The class id of S
- * \param classId_T The class id of T
- * \return true, if S is 'instanceof' T; false otherwise.
- */
-static BOOL isInstanceOf(u2 classId_S, u2 classId_T) {
-	CLASS_TYPE type_T = getClassType(classId_T);
-	CLASS_TYPE type_S = getClassType(classId_S);
-
-	BOOL instanceOf;
-	if (isObjectArray(classId_S) || isPrimitiveValueArray(classId_S)) {
-		if (isObjectArray(classId_T)) {
-			if (isObjectArray(classId_S)) {
-				// Both are object arrays:
-				u2 classId_SC = getArrayElementClassId(classId_S);
-				u2 classId_TC = getArrayElementClassId(classId_T);
-				instanceOf = isInstanceOf(classId_SC, classId_TC);
-			} else {
-				instanceOf = FALSE;
-			}
-		} else if (isPrimitiveValueArray(classId_T)) {
-			instanceOf = (classId_T == classId_S) ? TRUE : FALSE;
-		} else if (type_T == CT_CLASS) {
-			instanceOf = classId_T == 0 ? TRUE : FALSE;
-		} else {
-			// S shall implement T:
-			if (!is_S_implementing_T(classId_S, classId_T)) {
-				instanceOf = FALSE;
-			} else {
-				instanceOf = TRUE;
-			}
-			consout("not tested, since arrays does not implement any interfaces ... %d\n",
-					instanceOf);
-			jvmexit(1);
-		}
-	} else if (type_S == CT_CLASS) {
-		if (type_T == CT_CLASS) {
-			instanceOf = classId_S == classId_T ? TRUE : FALSE;
-			if (!instanceOf) {
-				instanceOf = is_S_SubClassing_T(classId_S, classId_T);
-			}
-		} else {
-			// S shall implement T:
-			if (!is_S_implementing_T(classId_S, classId_T)) {
-				instanceOf = FALSE;
-			} else {
-				instanceOf = TRUE;
-			}
-		}
-	} else if (type_S == CT_INTERFACE) {
-		// All objects in this VM has a class reference; so we don't support any classes having a class id which
-		// is an interface.
-		// This piece of code is not testable nor tested ;-)
-		consout("not implemented\n");
-		jvmexit(1);
-	} else {
-		consout("not implemented\n");
-		jvmexit(1);
-	}
-
-	/*
-	 *i If S is an ordinary (nonarray) class, then:
-	 *i    o If T is a class type, then S must be the same class (§2.8.1) as T or a subclass of T.
-	 *i    o If T is an interface type, then S must implement (§2.13) interface T.
-	 *i If S is an interface type, then:
-	 *-    o If T is a class type, then T must be Object (§2.4.7).
-	 *-    o If T is an interface type, then T must be the same interface as S, or a superinterface of S (§2.13.2).
-	 *  If S is a class representing the array type SC[], that is, an array of components of type SC, then:
-	 *i    o If T is a class type, then T must be Object (§2.4.7).
-	 *i    o If T is an array type TC[], that is, an array of components of type TC, then one of the following must be true:
-	 *i        + TC and SC are the same primitive type (§2.4.1).
-	 *i        + TC and SC are reference types (§2.4.6), and type SC can be cast to TC by these runtime rules.
-	 *(i)  o If T is an interface type, T must be one of the interfaces implemented by arrays (§2.15).
-	 */
-	return instanceOf;
-}
-
-INSTRUCTION(f_checkcast) {
+INS_BEGIN(f_checkcast) {
 	u2 constantPoolIndex = getU2FromCode();
 	u2 classId_T;
 	getClassReference(constantPoolIndex, &classId_T);
 
 	// Get a copy of the item at the top of the stack:
-	stackable* ref = pop();
-	push(ref->operand, ref->type);
+	stackable ref;
+	pop(&ref);
+	push(ref.operand, ref.type);
 
-	if (ref->type != OBJECTREF) {
-		consout("OBJECTREF expected; got %d\n", ref->type);
-		jvmexit(1);
-	}
+	VALIDATE_TYPE(ref.type , OBJECTREF)
 
-	if (ref->operand.jref != NULL) {
-		u2 classId_S = getClassIdFromObject(ref->operand.jref);
+	if (ref.operand.jref != NULL) {
+		u2 classId_S = oaGetClassIdFromObject(ref.operand.jref);
 
-		if (!isInstanceOf(classId_S, classId_T)) {
+		if (!CP_IsInstanceOf(classId_S, classId_T)) {
 			throwClassCastException(classId_S, classId_T);
 		}
 	}
 	//else: null is OK
 }
+INS_END
 
-INSTRUCTION(f_instanceof) {
+INS_BEGIN(f_instanceof) {
 	u2 constantPoolIndex = getU2FromCode();
 	u2 classId_T;
 	getClassReference(constantPoolIndex, &classId_T);
 
 	// Pop off the item at the top of the stack:
-	stackable* ref = pop();
+	stackable ref;
+	pop(&ref);
 
-	if (ref->type != OBJECTREF) {
-		consout("OBJECTREF expected; got %d\n", ref->type);
-		jvmexit(1);
-	}
+	VALIDATE_TYPE(ref.type, OBJECTREF);
 
 	jint instanceOf;
 
-	if (ref->operand.jref != NULL) {
-		u2 classId_S = getClassIdFromObject(ref->operand.jref);
-		instanceOf = isInstanceOf(classId_S, classId_T) ? 1 : 0;
+	if (ref.operand.jref != NULL) {
+		u2 classId_S = oaGetClassIdFromObject(ref.operand.jref);
+		instanceOf = CP_IsInstanceOf(classId_S, classId_T) ? 1 : 0;
 	} else {
 		instanceOf = 0;
 	}
 
 	operandStackPushJavaInt(instanceOf);
 }
-INSTRUCTION(f_ishl) {
+INS_END
+
+INS_BEGIN(f_ishl) {
 	jint jint2 = operandStackPopJavaInt() & 0x1f;
 	jint jint1 = operandStackPopJavaInt();
 	operandStackPushJavaInt(jint1 << jint2);
 }
+INS_END
 
-INSTRUCTION(f_ishr) {
+INS_BEGIN(f_ishr) {
 	jint jint2 = operandStackPopJavaInt() & 0x1f;
 	jint jint1 = operandStackPopJavaInt();
 	operandStackPushJavaInt(jint1 >> jint2);
 }
+INS_END
 
-INSTRUCTION(f_newarray) {
-	BEGIN;
+INS_BEGIN(f_lshl) {
+	jint v2 = operandStackPopJavaInt() & 0x3f;
+	jlong v1 = operandStackPopJavaLong();
+	operandStackPushJavaLong(v1 << v2);
+}
+INS_END
+
+INS_BEGIN(f_lshr) {
+	jint v2 = operandStackPopJavaInt() & 0x3f;
+	jlong v1 = operandStackPopJavaLong();
+	operandStackPushJavaLong(v1 >> v2);
+}
+INS_END
+
+INS_BEGIN(f_lushr) {
+	jint v2 = operandStackPopJavaInt() & 0x3f;
+	jlong v1 = operandStackPopJavaLong();
+	operandStackPushJavaLong(((ujlong)v1) >> v2);
+}
+INS_END
+
+INS_BEGIN(f_newarray) {
 	ARRAY_TYPE type = (ARRAY_TYPE) getU1FromCode();
 	jint count = operandStackPopJavaInt();
+
+	jobject jobj;
 
 	if (count < 0) {
 		throwNegativeArraySizeException();
 	} else {
-		// Simple type array allocation:
-		u2 classId;
-
-		CLASS_TYPE ct = convertArrayType(type);
-		classId = getClassIdForClassType(ct);
-
-		CALL(jobject jref = heapAllocPrimitiveTypeArray(count, type, classId));
-		if (jref != NULL) {
-			operandStackPushObjectRef(jref);
+		switch (type) {
+			case T_CHAR:
+			jobj = NewCharArray(count);
+			break;
+			case T_INT:
+			jobj = NewIntArray(count);
+			break;
+			case T_BOOLEAN:
+			jobj = NewBooleanArray(count);
+			break;
+			case T_BYTE:
+			jobj = NewByteArray(count);
+			break;
+			case T_LONG:
+			jobj = NewLongArray(count);
+			break;
+			case T_FLOAT:
+			case T_DOUBLE:
+			case T_SHORT:
+			case T_REFERENCE:
+			consout("not impl: %d\n", type);
+			jvmexit(1);
+		}
+		if (jobj != NULL) {
+			operandStackPushObjectRef(jobj);
 		}
 		// else: Out of mem has been thrown
 	}
-	END;
 }
+INS_END
 
-INSTRUCTION(f_anewarray) {
-	BEGIN;
-
+INS_BEGIN(f_anewarray) {
 	u2 constantPoolIndex = getU2FromCode();
 	u2 elementClassId;
 	getClassReference(constantPoolIndex, &elementClassId);
@@ -393,194 +262,230 @@ INSTRUCTION(f_anewarray) {
 	if (count < 0) {
 		throwNegativeArraySizeException();
 	} else {
-
-		CALL(jobject jref = heapAllocObjectArray(count, elementClassId));
+		jobject jref = NewObjectArray(count, elementClassId, NULL);
 		if (jref != NULL) {
 			operandStackPushObjectRef(jref);
 		}
 		// else: Out of mem has been thrown
 	}
-	END;
 }
+INS_END
 
-static BOOL validateArrayRef(jint ix, array* ref) {
-	BOOL refOk = TRUE;
-	if (ref == NULL) {
-		//__DEBUG("throwing NPE... %p\n", ref);
-		throwNullPointerException();
-		refOk = FALSE;
-	} else if (ix < 0 || ix >= ref->header.length) {
-		throwArrayIndexOutOfBoundsException(ix, ref->header.length);
-		DEB(consout("IndexOutOfBoundsException: %d %d", ix, ref->header.length));
-		refOk = FALSE;
-	}
+INS_BEGIN(f_aaload) {
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
+	jobject value = GetObjectArrayElement(a, index);
 
-	return refOk;
-}
-
-//
-// This macro will reference an array element. NullPointerException and ArrayIndexOutOfBoundsException is
-// thrown if conditions are met.
-//
-// Note! Always test on 'arrayRefOk' before continuing processing!
-//
-#define ARRAY_REF(IX, REF) \
-		jint IX = operandStackPopJavaInt();\
-		array* REF = (array*) operandStackPopObjectRef();\
-	    BOOL arrayRefOk = validateArrayRef(IX, REF);
-
-INSTRUCTION(f_aaload) {
-	// Note! This instruction and aastore might corrupt the stack if the 'array' - struct isn't proper
-	// aligned; see also comment in heap.h regarding 'array' struct.
-	ARRAY_REF(index, a);
-	if (arrayRefOk) {
-		jobject* jref = (jobject*) (&a->data[index * sizeof(jobject)]);
-		operandStackPushObjectRef(*jref);
+	if (!ExceptionCheck()) {
+		operandStackPushObjectRef(value);
 	}
 }
+INS_END
 
-void heapTester(void);
-
-INSTRUCTION(f_aastore) {
+INS_BEGIN(f_aastore) {
 	jobject value = operandStackPopObjectRef();
-	ARRAY_REF(index, a);
-	if (arrayRefOk) {
-		jobject* p = (jobject*) (&a->data[index * sizeof(jobject)]);
-		*p = value;
-	}
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
+
+	SetObjectArrayElement(a, index, value);
 }
+INS_END
 
-INSTRUCTION(f_baload) {
-	ARRAY_REF(index, a);
+INS_BEGIN(f_baload) {
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
 
-	if (arrayRefOk) {
-		jint value;
-		heapElement* hep = OBJECT_REF_TO_HEAP_ELEMENT(a);
-
-		CLASS_TYPE ctype = getClassType(hep->classId);
-
-		if (ctype == CT_BOOLEAN_ARRAY) {
-			// A boolean occupies a single byte:
-			javabyte* jp = (javabyte*) (&a->data[index * sizeof(javabyte)]);
-			value = (*jp & 0x01);
-		} else if (ctype == CT_BYTE_ARRAY) {
-			javabyte* jp = (javabyte*) (&a->data[index * sizeof(javabyte)]);
-			value = (int) *jp;
-		} else {
-			consout("Wrong class(array) type: %d", ctype);
-			jvmexit(1);
-		}
-
-		operandStackPushJavaInt(value);
-	}
-}
-
-INSTRUCTION(f_bastore) {
-	jint value = operandStackPopJavaInt();
-	ARRAY_REF(index, a);
-
-	if (arrayRefOk) {
-		heapElement* hep = OBJECT_REF_TO_HEAP_ELEMENT(a);
-
-		CLASS_TYPE ctype = getClassType(hep->classId);
-
-		if (ctype == CT_BOOLEAN_ARRAY) {
-			// A boolean occupies a single byte:
-			javabyte* jp = (javabyte*) (&a->data[index * sizeof(javabyte)]);
-			*jp = (s1) (value & 0x01);
-		} else if (ctype == CT_BYTE_ARRAY) {
-			javabyte* jp = (javabyte*) (&a->data[index * sizeof(javabyte)]);
-			*jp = (s1) (value & 0xff);
-		} else {
-			consout("Wrong class(array) type: %d", ctype);
-			jvmexit(1);
-		}
-	}
-}
-
-INSTRUCTION(f_caload) {
-	ARRAY_REF(index, a);
-	if (arrayRefOk) {
-		jchar* jp = (jchar*) (&a->data[index * sizeof(jchar)]);
-		operandStackPushJavaInt(*jp);
-	}
-}
-
-INSTRUCTION(f_iaload) {
-	ARRAY_REF(index, a);
-	if (arrayRefOk) {
-		jint* jp = (jint*) (&a->data[index * sizeof(jint)]);
-		operandStackPushJavaInt(*jp);
-	}
-}
-
-INSTRUCTION(f_iastore) {
-	jint value = operandStackPopJavaInt();
-	ARRAY_REF(index, a);
-	if (arrayRefOk) {
-		jint* jp = (jint*) (&a->data[index * sizeof(jint)]);
-		*jp = value;
-	}
-}
-
-INSTRUCTION(f_castore) {
-	jint value = operandStackPopJavaInt();
-	ARRAY_REF(index, a);
-	if (arrayRefOk) {
-		jchar* jp = (jchar*) (&a->data[index * sizeof(jchar)]);
-
-		*jp = value;
-	}
-}
-
-INSTRUCTION(f_arraylength) {
-	array* a = (array*) operandStackPopObjectRef();
 	if (a == NULL) {
 		throwNullPointerException();
 	} else {
-		operandStackPushJavaInt(a->header.length);
+		jint value;
+		CLASS_TYPE ctype = getClassType(oaGetClassIdFromObject(a));
+
+		if (ctype == CT_BOOLEAN_ARRAY) {
+			// A boolean occupies a single byte:
+			jboolean jp = GetBooleanArrayElement(a, index);
+			value = jp ? 1 : 0;
+		} else if (ctype == CT_BYTE_ARRAY) {
+			value = GetByteArrayElement(a, index);
+		} else {
+			consout("Wrong class(array) type: %d", ctype);
+			jvmexit(1);
+		}
+
+		if (!ExceptionCheck()) {
+			operandStackPushJavaInt(value);
+		}
 	}
 }
+INS_END
 
-INSTRUCTION(f_iinc) {
+INS_BEGIN(f_bastore) {
+	jint value = operandStackPopJavaInt();
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
+
+	if (a == NULL) {
+		throwNullPointerException();
+	} else {
+		CLASS_TYPE ctype = getClassType(oaGetClassIdFromObject(a));
+
+		if (ctype == CT_BOOLEAN_ARRAY) {
+			// A boolean occupies a single byte:
+			SetBooleanArrayElement(a, index, value & 1);
+		} else if (ctype == CT_BYTE_ARRAY) {
+			SetByteArrayElement(a, index, value & 0xff);
+		} else {
+			consout("Wrong class(array) type: %d", ctype);
+			jvmexit(1);
+		}
+	}
+}
+INS_END
+
+INS_BEGIN(f_caload) {
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
+	jchar value = GetCharArrayElement(a, index);
+
+	if (!ExceptionCheck()) {
+		operandStackPushJavaInt(value);
+	}
+}
+INS_END
+
+INS_BEGIN(f_iaload) {
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
+	jint value = GetIntArrayElement(a, index);
+
+	if (!ExceptionCheck()) {
+		operandStackPushJavaInt(value);
+	}
+}
+INS_END
+
+INS_BEGIN(f_laload) {
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
+	jlong value = GetLongArrayElement(a, index);
+
+	if (!ExceptionCheck()) {
+		operandStackPushJavaLong(value);
+	}
+}
+INS_END
+
+INS_BEGIN(f_iastore) {
+	jint value = operandStackPopJavaInt();
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
+
+	SetIntArrayElement(a, index, value);
+}
+INS_END
+
+INS_BEGIN(f_lastore) {
+	jlong value = operandStackPopJavaLong();
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
+
+	SetLongArrayElement(a, index, value);
+}
+INS_END
+
+INS_BEGIN(f_castore) {
+	jint value = operandStackPopJavaInt();
+	jint index = operandStackPopJavaInt();
+	jarray a = (jarray) operandStackPopObjectRef();
+
+	SetCharArrayElement(a, index, value);
+}
+INS_END
+
+INS_BEGIN(f_arraylength) {
+	array_t * a = (array_t*) operandStackPopObjectRef();
+	if (a == NULL) {
+		throwNullPointerException();
+	} else {
+		operandStackPushJavaInt(GetArrayLength(a));
+	}
+}
+INS_END
+
+INS_BEGIN(f_iinc) {
 	u1 varnum = getU1FromCode();
 	jint delta = (jint) getS1FromCode();
-
 	operandStackIncrementVariableJavaInt(varnum, delta);
 }
+INS_END
 
-INSTRUCTION(f_unused) {
-	DEB(consout("Unsupported instruction"));
-	jvmexit(1);
+INS_BEGIN(f_dup_x1) {
+	stackable value1;
+	pop(&value1);
+	stackable value2;
+	pop(&value2);
+
+	push(value1.operand, value1.type);
+	push(value2.operand, value2.type);
+	push(value1.operand, value1.type);
 }
+INS_END
 
-INSTRUCTION(f_dup) {
-	stackable* st = pop();
-	push(st->operand, st->type);
-	push(st->operand, st->type);
+INS_BEGIN(f_dup2_x1) {
+	// When dup'ing we exploit that a category 2 consists of two entries on the stack:
+	//..., value3, value2, value1 => ..., value2, value1, value3, value2, value1
+	stackable value1;
+	pop(&value1);
+	stackable value2;
+	pop(&value2);
+	stackable value3;
+	pop(&value3);
+
+	push(value2.operand, value2.type);
+	push(value1.operand, value1.type);
+
+	push(value3.operand, value3.type);
+
+	push(value2.operand, value2.type);
+	push(value1.operand, value1.type);
 }
+INS_END
 
-INSTRUCTION(f_dup2) {
-	stackable* st2 = pop();
-	stackable* st1 = pop();
-	push(st1->operand, st1->type);
-	push(st2->operand, st2->type);
-	push(st1->operand, st1->type);
-	push(st2->operand, st2->type);
+INS_BEGIN(f_dup) {
+	stackable st;
+	pop(&st);
+	push(st.operand, st.type);
+	push(st.operand, st.type);
 }
+INS_END
 
-INSTRUCTION(f_bipush) {
+INS_BEGIN(f_dup2) {
+	stackable st2;
+	pop(&st2);
+	stackable st1;
+	pop(&st1);
+
+	push(st1.operand, st1.type);
+	push(st2.operand, st2.type);
+	push(st1.operand, st1.type);
+	push(st2.operand, st2.type);
+}
+INS_END
+
+INS_BEGIN(f_bipush) {
 	// Sign extend:
 	s1 val = getU1FromCode();
 	operandStackPushJavaInt((jint) val);
 }
+INS_END
 
-INSTRUCTION(f_sipush) {
+INS_BEGIN(f_sipush) {
 	s2 val = getS2FromCode();
 	operandStackPushJavaInt((jint) val);
 }
+INS_END
 
-INSTRUCTION(f_i2b) {
+INS_BEGIN(f_i2b) {
 	jint val = operandStackPopJavaInt();
 	val = val & 0xff;
 	if ((val & 0xffffff80) != 0) {
@@ -589,410 +494,402 @@ INSTRUCTION(f_i2b) {
 	}
 	operandStackPushJavaInt(val);
 }
+INS_END
 
-/**
- * This method creates and allocates a java.lang.String object and returns the created Object
- * \param value The constant string to initiate with
- * \return The allocated object
- */
-static jobject allocJavaLangString(const char* value) {
-	BEGIN;
-	//markAndSweep();
-	//printf("*** ALLOC STRING BEGIN ***\n");
-	// Allocate String object:
-	u2 size;
-	getClassSize(javaLangStringClassIndex, &size); // size of java.lang.String
-	CALL(jobject stringObject = heapAllocObject(size, javaLangStringClassIndex));
-
-	if (stringObject != NULL) {
-		// Allocate char[]:
-		size_t len = strlen(value);
-
-		// Avoid garbage collection of the newly allocated String object (there is no reference to it yet,
-		// so a protection is necessary):
-		CALL(heapProtect(stringObject));
-		u2 charArrayClassId = getClassIdForClassType(CT_CHAR_ARRAY);
-		CALL(jobject charArray = heapAllocPrimitiveTypeArray(len, 1, charArrayClassId));
-		CALL(heapProtect(NULL));
-
-		if (charArray != NULL) {
-			// memcpy into charArray (length and type are set):
-			int i;
-			array* a = (array*) charArray;
-			for (i = 0; i < len; i++) {
-				a->data[i] = value[i];
-			}
-
-			stackable* val = (stackable*) stringObject;
-			// TODO: This is a hack - we are exploiting that the char[] is stackable[0] in a String!
-			val->operand.jref = charArray + (0 * sizeof(stackable));
-			val->type = OBJECTREF;
-		}
-		// else: out of mem has been thrown
-	}
-	END;
-	return stringObject;
+INS_BEGIN(f_i2c) {
+	jint val = operandStackPopJavaInt();
+	val = val & 0xff;
+	operandStackPushJavaInt(val);
 }
+INS_END
 
-static void common_ldc(u2 constantPoolIndex)
-{
-    // Look up value (int, float or String) from within const pool:
-    constantDef constant;
-    getConstant(constantPoolIndex, &constant);
-    if (constant.type == CONSTANT_INTEGER) {
-		operandStackPushJavaInt(constant.value.jrenameint);
-	} else if (constant.type == CONSTANT_STRING) {
-		jobject str = allocJavaLangString(constant.value.string);
-		operandStackPushObjectRef(str);
-	} else if (constant.type == CONSTANT_CLASS) {
-		//registerNatives skal bygge det Class[], der skal foretages lookup i:
-		jclass jc = getJavaLangClass(constant.value.classId);
-		operandStackPushObjectRef(jc);
-	} else {
-		// TODO Support float
-		consout("Unsupported type: %d\n", constant.type);
-		jvmexit(1);
-	}
+INS_BEGIN(f_l2i) {
+	jlong val = operandStackPopJavaLong();
+	operandStackPushJavaInt((jint)val);
 }
+INS_END
 
-INSTRUCTION(f_ldc) {
-    common_ldc(getU1FromCode());
+INS_BEGIN(f_i2l) {
+	jint v1 = operandStackPopJavaInt();
+	operandStackPushJavaLong((jlong)v1);
 }
+INS_END
 
-INSTRUCTION(f_ldc_w) {
-    common_ldc(getU2FromCode());
+INS_BEGIN(f_ldc) {
+	cpCommonLDC(getU1FromCode());
 }
+INS_END
 
-INSTRUCTION(f_vreturn) {
-	BEGIN;
+INS_BEGIN(f_ldc_w) {
+	cpCommonLDC(getU2FromCode());
+}
+INS_END
+
+INS_BEGIN(f_ldc2_w) {
+	cpCommonLDC(getU2FromCode());
+}
+INS_END
+
+INS_BEGIN(f_vreturn) {
 	pop_frame();
-	END;
 }
+INS_END
 
-INSTRUCTION(f_invokeinterface) {
-	BEGIN;
+INS_BEGIN(f_invokeinterface) {
 	u2 methodRef = getU2FromCode();
 	getU1FromCode(); // 'count'
 	getU1FromCode(); // shall always be 0 - but who cares ?!
 
-	//---------------------------------------------------------------
-	const methodInClass* mic;
-
-	CALL(mic = getVirtualMethodEntry(methodRef));
+	const methodInClass * mic = getVirtualMethodEntry(methodRef);
 
 	if (mic != NULL) {
-		CALL(invokeCommon(mic, FALSE))
-		;
+		invokeCommon(mic, FALSE);
 	}
-	//---------------------------------------------------------------
-	END;
 }
+INS_END
 
-INSTRUCTION(f_invokevirtual) {
-	BEGIN;
+INS_BEGIN(f_invokevirtual) {
 	u2 methodRef = getU2FromCode();
 
 	//---------------------------------------------------------------
-	const methodInClass* mic;
-
-	CALL(mic = getVirtualMethodEntry(methodRef));
+	const methodInClass * mic;
+	mic = getVirtualMethodEntry(methodRef);
 
 	if (mic != NULL) {
-		CALL(invokeCommon(mic, FALSE))
-		;
+		invokeCommon(mic, FALSE);
 	}
 	//---------------------------------------------------------------
-	END;
 }
+INS_END
 
-INSTRUCTION(f_invokespecial) {
-	BEGIN;
+INS_BEGIN(f_invokespecial) {
 	u2 methodRef = getU2FromCode();
 
-	const methodInClass* mic;
+	const methodInClass * mic = getStaticMethodEntry(context.classIndex, methodRef);
 
-	CALL(mic = getStaticMethodEntry(context.classIndex, methodRef));
-
-	if (operandStackIsObjectRefAtOffsetNull(mic->numberOfArguments)) {
+	if (osIsObjectRefAtOffsetNull(mic->numberOfArguments)) {
 		throwNullPointerException();
 	} else {
-		CALL(invokeCommon(mic, FALSE))
-		;
+		invokeCommon(mic, FALSE);
 	}
-	END;
 }
+INS_END
 
-void invoke_static(u2 staticMethodRef) {
-	BEGIN;
-
-	const methodInClass* mic;
-
-	CALL(mic = getStaticMethodEntry(context.classIndex, staticMethodRef));
-
-	CALL(invokeCommon(mic, FALSE));
-
-	END;
-}
-
-INSTRUCTION(f_invokestatic) {
-	BEGIN;
-
+INS_BEGIN(f_invokestatic) {
 	u2 staticMethodRef = getU2FromCode();
 
-	CALL(invoke_static(staticMethodRef));
+	const methodInClass* mic = getStaticMethodEntry(context.classIndex, staticMethodRef);
 
-	END;
+	invokeCommon(mic, FALSE);
 }
+INS_END
 
-INSTRUCTION(f_putstatic) {
+INS_BEGIN(f_getstatic) {
 	u2 staticFieldRef = getU2FromCode();
 	u2 address;
 	u1 size;
-	getStaticFieldEntry(staticFieldRef, &address, &size);
-	if (size != 1) {
-		// TODO support
-		DEB(consout("No support for size != 1 (double, long, void): %d\n", size));
-		jvmexit(1);
-	}
-	stackable* value = pop();
-	staticMemory[address] = *value;
-}
 
-INSTRUCTION(f_getstatic) {
-	BEGIN;
-	u2 staticFieldRef = getU2FromCode();
-	u2 address;
-	u1 size;
 	getStaticFieldEntry(staticFieldRef, &address, &size);
-	if (size != 1) {
-		DEB(consout("No support for size != 1 (double, long, void): %d\n", size));
-		jvmexit(1);
-	}
+
+	// MSValue at highest addres; LSValue at lowest:
 	stackable value = staticMemory[address];
 	push(value.operand, value.type);
-	//CALL(validateStackables(stack, context.operandStackPointer));
 
-	END;
+	if (size == 2) {
+		stackable value = staticMemory[address+1];
+		push(value.operand, value.type);
+	}
 }
+INS_END
 
-INSTRUCTION(f_putfield) {
+INS_BEGIN(f_putstatic) {
+	u2 staticFieldRef = getU2FromCode();
+	u2 address;
+	u1 size;
+	getStaticFieldEntry(staticFieldRef, &address, &size);
+	stackable value;
+
+	// MSValue at highest addres; LSValue at lowest:
+	if (size == 2) {
+		pop(&value);
+		staticMemory[address+1] = value;
+	}
+
+	pop(&value);
+	staticMemory[address] = value;
+}
+INS_END
+
+INS_BEGIN(f_putfield) {
 	u2 fieldRef = getU2FromCode();
 	u2 address;
 	u1 size;
 	// putfield is relative to 'this', which is pushed onto the stack prior to this instruction
 	getInstanceFieldEntry(fieldRef, &address, &size);
 
-	if (size != 1) {
-		// TODO support
-		DEB(consout("No support for size != 1 (double, long, void): %d\n", size));
-		jvmexit(1);
+	stackable msValue;
+	pop(&msValue);
+	stackable lsValue;
+	if (size == 2) {
+		pop(&lsValue);
 	}
-	stackable* value = pop();
-	stackable* this = pop();
-	if (this->type != OBJECTREF) {
-		DEB(consout("Type mismatch: Expected OBJECTREF, got %d\n", this->type));
-		jvmexit(1);
-	}
+	stackable this;
+	pop(&this);
+	VALIDATE_TYPE(this.type, OBJECTREF);
 
-	if (this->operand.jref != NULL) {
-		*((stackable*) (((void*) (this->operand.jref)) + address * sizeof(stackable))) = *value;
+	if (size == 1) {
+		PutField(this.operand.jref, address, &msValue);
+	} else if (size == 2) {
+		PutField(this.operand.jref, address, &lsValue);
+		PutField(this.operand.jref, address+1, &msValue);
 	} else {
-		throwNullPointerException();
+		consout("No support for size != 1 or 2: %d\n", size);
+		jvmexit(1);
 	}
 }
+INS_END
 
-INSTRUCTION(f_getfield) {
+INS_BEGIN(f_getfield) {
 	u2 fieldRef = getU2FromCode();
 	u2 address;
 	u1 size;
+	//consoutli("getfield: %04x\n", context.programCounter);
 	getInstanceFieldEntry(fieldRef, &address, &size);
-	if (size != 1) {
-		DEB(consout("No support for size != 1 (double, long, void): %d\n", size));
-		jvmexit(1);
-	}
-	stackable* this = pop();
-	if (this->operand.jref == NULL) {
-		throwNullPointerException();
+	stackable this;
+	pop(&this);
+	if (this.operand.jref != NULL) {
+		if (size == 1) {
+			stackable * value = GetField(this.operand.jref, address);
+			push(value->operand, value->type);
+		} else if (size == 2) {
+			stackable * value = GetField(this.operand.jref, address);
+			push(value->operand, value->type);
+			value = GetField(this.operand.jref, address + 1);
+			push(value->operand, value->type);
+		} else {
+			consout("No support for size != 1 or 2: %d\n", size);
+			jvmexit(1);
+		}
 	} else {
-		stackable* value = (stackable*) ((void*) (this->operand.jref) + address * sizeof(stackable));
-
-		//	printf("getfield: ref = %d, address = %d, this = %ld\n", fieldRef, address, this.operand.jref);
-		//	printf("getfield: type = %d\n", value->type);
-		push(value->operand, value->type);
+		throwNullPointerException();
 	}
 }
+INS_END
 
-INSTRUCTION(f_areturn) {
-	BEGIN;
-
+INS_BEGIN(f_areturn) {
 	// Object return value:
 	jobject jref = operandStackPopObjectRef();
 
-	f_vreturn();
+	pop_frame();
 
 	// Push result:
 	operandStackPushObjectRef(jref);
-	END;
 }
+INS_END
 
-INSTRUCTION(f_ireturn) {
+INS_BEGIN(f_ireturn) {
 	// Integer return value:
 	jint jrenameint = operandStackPopJavaInt();
 
-	f_vreturn();
+	pop_frame();
 
 	// Push result:
 	operandStackPushJavaInt(jrenameint);
 }
+INS_END
 
-INSTRUCTION(f_aload) {
+INS_BEGIN(f_lreturn) {
+	// Long return value:
+	jlong j = operandStackPopJavaLong();
+
+	pop_frame();
+
+	// Push result:
+	operandStackPushJavaLong(j);
+}
+INS_END
+
+INS_BEGIN(f_aload) {
 	u1 index = getU1FromCode();
 	operandStackPushVariableObjectRef(index);
 }
+INS_END
 
-INSTRUCTION(f_aload_0) {
+INS_BEGIN(f_aload_0) {
 	operandStackPushVariableObjectRef(0);
 }
+INS_END
 
-INSTRUCTION(f_aload_1) {
-	operandStackPushVariableObjectRef(1);
-}
+INS_BEGIN(f_aload_1) //
+operandStackPushVariableObjectRef(1);
+INS_END
 
-INSTRUCTION(f_aload_2) {
-	operandStackPushVariableObjectRef(2);
-}
+INS_BEGIN(f_aload_2) //
+operandStackPushVariableObjectRef(2);
+INS_END
 
-INSTRUCTION(f_aload_3) {
-	operandStackPushVariableObjectRef(3);
-}
+INS_BEGIN(f_aload_3) //
+operandStackPushVariableObjectRef(3);
+INS_END
 
-INSTRUCTION(f_iload) {
+INS_BEGIN(f_iload) //
+u1 index = getU1FromCode();
+operandStackPushVariableJavaInt(index);
+INS_END
+
+INS_BEGIN(f_iload_0) //
+operandStackPushVariableJavaInt(0);
+INS_END
+
+INS_BEGIN(f_iload_1) //
+operandStackPushVariableJavaInt(1);
+INS_END
+
+INS_BEGIN(f_iload_2) //
+operandStackPushVariableJavaInt(2);
+INS_END
+
+INS_BEGIN(f_iload_3) //
+operandStackPushVariableJavaInt(3);
+INS_END
+
+INS_BEGIN(f_lload) {
 	u1 index = getU1FromCode();
-	operandStackPushVariableJavaInt(index);
+	operandStackPushVariableJavaLong(index);
 }
+INS_END
 
-INSTRUCTION(f_iload_0) {
-	operandStackPushVariableJavaInt(0);
+INS_BEGIN(f_lload_0) {
+	operandStackPushVariableJavaLong(0);
 }
+INS_END
 
-INSTRUCTION(f_iload_1) {
-	operandStackPushVariableJavaInt(1);
+INS_BEGIN(f_lload_1) {
+	operandStackPushVariableJavaLong(1);
 }
+INS_END
 
-INSTRUCTION(f_iload_2) {
-	operandStackPushVariableJavaInt(2);
+INS_BEGIN(f_lload_2) {
+	operandStackPushVariableJavaLong(2);
 }
+INS_END
 
-INSTRUCTION(f_iload_3) {
-	operandStackPushVariableJavaInt(3);
+INS_BEGIN(f_lload_3) {
+	operandStackPushVariableJavaLong(3);
 }
+INS_END
 
-#define IFINS(NAME, CONDITION) \
-		INSTRUCTION(NAME) { \
-			s2 offset = getS2FromCode();\
-			\
-			if (CONDITION) { \
-				context.programCounter -= 3;\
-				context.programCounter += offset; \
-			} \
-		}
+INS_BEGIN(f_aconst_null) //
+operandStackPushObjectRef((jobject) NULL);
+INS_END
 
-IFINS(f_ifeq, operandStackPopJavaInt() == 0)
-IFINS(f_ifne, operandStackPopJavaInt() != 0)
-IFINS(f_ifgt, operandStackPopJavaInt() > 0)
-IFINS(f_ifle, operandStackPopJavaInt() <= 0)
-IFINS(f_iflt, operandStackPopJavaInt() < 0)
-IFINS(f_ifge, operandStackPopJavaInt() >= 0)
-IFINS(f_if_icmpeq, operandStackPopJavaInt() == operandStackPopJavaInt())
-IFINS(f_if_icmpne, operandStackPopJavaInt() != operandStackPopJavaInt())
-IFINS(f_if_acmpeq, operandStackPopObjectRef() == operandStackPopObjectRef())
-IFINS(f_if_acmpne, operandStackPopObjectRef() != operandStackPopObjectRef())
-// Note! Left is pushed first and popped last => the condition shall be 'inverted'
-IFINS(f_if_icmple, operandStackPopJavaInt() >= operandStackPopJavaInt())
-IFINS(f_if_icmplt, operandStackPopJavaInt() > operandStackPopJavaInt())
-IFINS(f_if_icmpge, operandStackPopJavaInt() <= operandStackPopJavaInt())
-IFINS(f_if_icmpgt, operandStackPopJavaInt() < operandStackPopJavaInt())
-//INSTRUCTION(if_icmple) {
-//	s2 offset = getS2FromCode();
-//
-//	javaint value1 = operandStackPopJavaInt();
-//	javaint value2 = operandStackPopJavaInt();
-//	printf("val1 = %d, val2 = %d\n", value1, value2);
-//	if (value1 <= value2) {
-//		context.programCounter -= 3;
-//		context.programCounter += offset;
-//	}
-//}
-IFINS(f_ifnonnull, operandStackPopObjectRef() != NULL)
-IFINS(f_ifnull, operandStackPopObjectRef() == NULL)
+INS_BEGIN(f_iconst_m1) //
+operandStackPushJavaInt(-1);
+INS_END
 
-IFINS(f_goto, TRUE)
-;
+INS_BEGIN(f_iconst_0) //
+operandStackPushJavaInt(0);
+INS_END
 
-INSTRUCTION(f_aconst_null) {
-	operandStackPushObjectRef((jobject) NULL);
+INS_BEGIN(f_iconst_1) //
+operandStackPushJavaInt(1);
+INS_END
+
+INS_BEGIN(f_iconst_2) //
+operandStackPushJavaInt(2);
+INS_END
+
+INS_BEGIN(f_iconst_3) //
+operandStackPushJavaInt(3);
+INS_END
+
+INS_BEGIN(f_iconst_4) //
+operandStackPushJavaInt(4);
+INS_END
+
+INS_BEGIN(f_iconst_5) //
+operandStackPushJavaInt(5);
+INS_END
+
+INS_BEGIN(f_lconst_0) {
+	operandStackPushJavaLong(0);
 }
+INS_END
 
-INSTRUCTION(f_iconst_m1) {
-	operandStackPushJavaInt(-1);
+INS_BEGIN(f_lconst_1) {
+	operandStackPushJavaLong(1);
 }
+INS_END
 
-INSTRUCTION(f_iconst_0) {
-	operandStackPushJavaInt(0);
-}
-
-INSTRUCTION(f_iconst_1) {
-	operandStackPushJavaInt(1);
-}
-
-INSTRUCTION(f_iconst_2) {
-	operandStackPushJavaInt(2);
-}
-
-INSTRUCTION(f_iconst_3) {
-	operandStackPushJavaInt(3);
-}
-
-INSTRUCTION(f_iconst_4) {
-	operandStackPushJavaInt(4);
-}
-
-INSTRUCTION(f_iconst_5) {
-	operandStackPushJavaInt(5);
-}
-
-INSTRUCTION(f_isub) {
+INS_BEGIN(f_isub) {
 	jint jrenameint1 = operandStackPopJavaInt();
 	jint jrenameint2 = operandStackPopJavaInt();
 	operandStackPushJavaInt(jrenameint2 - jrenameint1);
 }
+INS_END
 
-INSTRUCTION(f_iand) {
+INS_BEGIN(f_lsub) {
+	jlong j1 = operandStackPopJavaLong();
+	jlong j2 = operandStackPopJavaLong();
+	operandStackPushJavaLong(j2 - j1);
+}
+INS_END
+
+INS_BEGIN(f_iand) {
 	jint jrenameint1 = operandStackPopJavaInt();
 	jint jrenameint2 = operandStackPopJavaInt();
 	operandStackPushJavaInt(jrenameint2 & jrenameint1);
 }
+INS_END
 
-INSTRUCTION(f_ior) {
-	jint jrenameint1 = operandStackPopJavaInt();
-	jint jrenameint2 = operandStackPopJavaInt();
-	operandStackPushJavaInt(jrenameint2 | jrenameint1);
+INS_BEGIN(f_ior) //
+jint jrenameint1 = operandStackPopJavaInt();
+jint jrenameint2 = operandStackPopJavaInt();
+operandStackPushJavaInt(jrenameint2 | jrenameint1);
+INS_END
+
+INS_BEGIN(f_ixor)
+jint jrenameint1 = operandStackPopJavaInt();
+jint jrenameint2 = operandStackPopJavaInt();
+operandStackPushJavaInt(jrenameint2 ^ jrenameint1);
+INS_END
+
+INS_BEGIN(f_land) {
+	jlong j1 = operandStackPopJavaLong();
+	jlong j2 = operandStackPopJavaLong();
+	operandStackPushJavaLong(j2 & j1);
 }
+INS_END
 
-INSTRUCTION(f_ixor) {
-	jint jrenameint1 = operandStackPopJavaInt();
-	jint jrenameint2 = operandStackPopJavaInt();
-	operandStackPushJavaInt(jrenameint2 ^ jrenameint1);
+INS_BEGIN(f_lor) {
+	jlong j1 = operandStackPopJavaLong();
+	jlong j2 = operandStackPopJavaLong();
+	operandStackPushJavaLong(j2 | j1);
 }
+INS_END
 
-INSTRUCTION(f_iadd) {
+INS_BEGIN(f_lxor) {
+	jlong j1 = operandStackPopJavaLong();
+	jlong j2 = operandStackPopJavaLong();
+	operandStackPushJavaLong(j2 ^ j1);
+}
+INS_END
+
+INS_BEGIN(f_iadd) {
 	jint jrenameint1 = operandStackPopJavaInt();
 	jint jrenameint2 = operandStackPopJavaInt();
 	operandStackPushJavaInt(jrenameint2 + jrenameint1);
 }
+INS_END
 
-static const char* divisionByZeroMessage = "Division by zero";
-INSTRUCTION(f_idiv) {
+INS_BEGIN(f_ladd) {
+	jlong j1 = operandStackPopJavaLong();
+	jlong j2 = operandStackPopJavaLong();
+	operandStackPushJavaLong(j2 + j1);
+}
+INS_END
+
+INS_BEGIN(f_idiv) {
 	jint jrenameint1 = operandStackPopJavaInt();
 	jint jrenameint2 = operandStackPopJavaInt();
 	if (jrenameint1 == 0) {
@@ -1001,80 +898,556 @@ INSTRUCTION(f_idiv) {
 		operandStackPushJavaInt(jrenameint2 / jrenameint1);
 	}
 }
+INS_END
 
-INSTRUCTION(f_ineg) {
-	operandStackPushJavaInt(-operandStackPopJavaInt());
-}
-
-INSTRUCTION(f_irem) {
-	jint jrenameint1 = operandStackPopJavaInt();
-	jint jrenameint2 = operandStackPopJavaInt();
-	if (jrenameint1 == 0) {
+INS_BEGIN(f_ldiv) {
+	jlong j1 = operandStackPopJavaLong();
+	jlong j2 = operandStackPopJavaLong();
+	if (j1 == 0) {
 		throwArithmeticException(divisionByZeroMessage);
 	} else {
-		operandStackPushJavaInt(jrenameint2 % jrenameint1);
+		operandStackPushJavaLong(j2 / j1);
 	}
 }
+INS_END
 
-INSTRUCTION(f_imul) {
+INS_BEGIN(f_ineg) {
+	operandStackPushJavaInt(-operandStackPopJavaInt());
+}
+INS_END
+
+INS_BEGIN(f_lneg) {
+	operandStackPushJavaLong(-operandStackPopJavaLong());
+}
+INS_END
+
+INS_BEGIN(f_irem) {
+	jint v1 = operandStackPopJavaInt();
+	jint v2 = operandStackPopJavaInt();
+	if (v1 == 0) {
+		throwArithmeticException(divisionByZeroMessage);
+	} else {
+		operandStackPushJavaInt(v2 % v1);
+	}
+}
+INS_END
+
+INS_BEGIN(f_lrem) {
+	jlong j1 = operandStackPopJavaLong();
+	jlong j2 = operandStackPopJavaLong();
+	if (j1 == 0) {
+		throwArithmeticException(divisionByZeroMessage);
+	} else {
+		operandStackPushJavaLong(j2 % j1);
+	}
+}
+INS_END
+
+INS_BEGIN(f_imul) {
 	jint jrenameint1 = operandStackPopJavaInt();
 	jint jrenameint2 = operandStackPopJavaInt();
 	operandStackPushJavaInt(jrenameint2 * jrenameint1);
 }
+INS_END
 
-INSTRUCTION(f_astore) {
+INS_BEGIN(f_lmul) {
+	jlong j1 = operandStackPopJavaLong();
+	jlong j2 = operandStackPopJavaLong();
+	operandStackPushJavaLong(j2 * j1);
+}
+INS_END
+
+INS_BEGIN(f_astore) //
+u1 index = getU1FromCode();
+operandStackPopVariableObjectRef(index);
+INS_END
+
+INS_BEGIN(f_astore_0) //
+operandStackPopVariableObjectRef(0);
+INS_END
+
+INS_BEGIN(f_astore_1) //
+operandStackPopVariableObjectRef(1);
+INS_END
+
+INS_BEGIN(f_astore_2) //
+operandStackPopVariableObjectRef(2);
+INS_END
+
+INS_BEGIN(f_astore_3) //
+operandStackPopVariableObjectRef(3);
+INS_END
+
+INS_BEGIN(f_istore) //
+u1 index = getU1FromCode();
+operandStackPopVariableJavaInt(index);
+INS_END
+
+INS_BEGIN(f_istore_0) //
+operandStackPopVariableJavaInt(0);
+INS_END
+
+INS_BEGIN(f_istore_1) //
+operandStackPopVariableJavaInt(1);
+INS_END
+
+INS_BEGIN(f_istore_2) //
+operandStackPopVariableJavaInt(2);
+INS_END
+
+INS_BEGIN(f_istore_3) //
+operandStackPopVariableJavaInt(3);
+INS_END
+
+INS_BEGIN(f_lstore) {
 	u1 index = getU1FromCode();
-	operandStackPopVariableObjectRef(index);
+	operandStackPopVariableJavaLong(index);
 }
+INS_END
 
-INSTRUCTION(f_astore_0) {
-	operandStackPopVariableObjectRef(0);
+INS_BEGIN(f_lstore_0) {
+	operandStackPopVariableJavaLong(0);
 }
+INS_END
 
-INSTRUCTION(f_astore_1) {
-	operandStackPopVariableObjectRef(1);
+INS_BEGIN(f_lstore_1) {
+	operandStackPopVariableJavaLong(1);
 }
+INS_END
 
-INSTRUCTION(f_astore_2) {
-	operandStackPopVariableObjectRef(2);
+INS_BEGIN(f_lstore_2) {
+	operandStackPopVariableJavaLong(2);
 }
+INS_END
 
-INSTRUCTION(f_astore_3) {
-	operandStackPopVariableObjectRef(3);
+INS_BEGIN(f_lstore_3) {
+	operandStackPopVariableJavaLong(3);
 }
+INS_END
 
-INSTRUCTION(f_istore) {
-	u1 index = getU1FromCode();
-	operandStackPopVariableJavaInt(index);
+INS_BEGIN(f_lcmp) {
+	jlong val1 = operandStackPopJavaLong();
+	jlong val2 = operandStackPopJavaLong();
+	if (val2 > val1) {
+		operandStackPushJavaInt(1);
+	} else
+	if (val2 < val1) {
+		operandStackPushJavaInt(-1);
+	} else {
+		operandStackPushJavaInt(0);
+	}
 }
+INS_END
 
-INSTRUCTION(f_istore_0) {
-	operandStackPopVariableJavaInt(0);
-}
+/////////////////////////////////////////////////////////
+// Instructions END
+/////////////////////////////////////////////////////////
 
-INSTRUCTION(f_istore_1) {
-	operandStackPopVariableJavaInt(1);
-}
+/////////////////////////////////////////////////////
+// Undefined instructions BEGIN
+/////////////////////////////////////////////////////
 
-INSTRUCTION(f_istore_2) {
-	operandStackPopVariableJavaInt(2);
-}
-
-INSTRUCTION(f_istore_3) {
-	operandStackPopVariableJavaInt(3);
-}
-
-//INSTRUCTION(f_halt) {
-//	// Garbage collect:
-//	markAndSweep();
+INS_BEGIN(f_fconst_0) //
+INS_UNDEFINED;
 //
-//	consout("********************************\n");
-//	consout("HALT instruction met; halting VM\n");
-//	consout("********************************\n");
-//
-//	jvmexit(0);
-//}
+INS_END
 
+INS_BEGIN(f_fconst_1) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fconst_2) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dconst_0) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dconst_1) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fload) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dload) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fload_0) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fload_1) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fload_2) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fload_3) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dload_0) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dload_1) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dload_2) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dload_3) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_faload) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_daload) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_saload) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fstore) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dstore) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fstore_0) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fstore_1) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fstore_2) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fstore_3) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dstore_0) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dstore_1) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dstore_2) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dstore_3) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fastore) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dastore) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_sastore) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dup_x2) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dup2_x2) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_swap) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fadd) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dadd) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fsub) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dsub) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fmul) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dmul) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fdiv) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_ddiv) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_frem) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_drem) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fneg) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dneg) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_iushr) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_i2f) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_i2d) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_l2f) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_l2d) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_f2i) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_f2l) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_f2d) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_d2i) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_d2l) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_d2f) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_i2s) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fcmpl) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_fcmpg) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dcmpl) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dcmpg) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_jsr) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_ret) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_tableswitch) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_lookupswitch) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_freturn) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_dreturn) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_unused) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_wide) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_multianewarray) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_goto_w) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_jsr_w) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_breakpoint) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_thinj_undefined) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_impdep1) //
+INS_UNDEFINED;
+//
+INS_END
+
+INS_BEGIN(f_impdep2) //
+INS_UNDEFINED;
+//
+INS_END
+
+/////////////////////////////////////////////////////
+// Undefined instructions END
+/////////////////////////////////////////////////////
+
+
+}
+
+//From file:///tools/vmspec/Mnemonics.doc.html
+//
+//Contents | Prev | Next | Index	The JavaTM Virtual Machine Specification
+//
+//CHAPTER 9
+//Opcode Mnemonics by Opcode
+//
+//This chapter gives the mapping from Java virtual machine instruction opcodes, including the reserved opcodes (§6.2), to the mnemonics for the instructions represented by those opcodes.
+//
 //00 (0x00) nop
 //
 //01 (0x01) aconst_null
@@ -1486,4 +1859,11 @@ INSTRUCTION(f_istore_3) {
 //254 (0xfe) impdep1
 //
 //255 (0xff) impdep2
-
+//
+//1 For historical reasons, opcode value 186 is not used.
+//
+//Contents | Prev | Next | Index
+//
+//The JavaTM Virtual Machine Specification
+//Copyright © 1999 Sun Microsystems, Inc. All rights reserved
+//Please send any comments or corrections to jvm@java.sun.com

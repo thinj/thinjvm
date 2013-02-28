@@ -26,12 +26,6 @@ extern "C" {
  * the execute() - function shall return
  */
 #define RETURN_FROM_VM 0x01
-/**
- * The RETURN_FROM_VM_PENDING shall be set when calling the execute() - function.
- * When a pop_frame is executed, the RETURN_FROM_VM_PENDING shall be copied to the RETURN_FROM_VM
- * flag.
- */
-#define RETURN_FROM_VM_PENDING 2
 
 // The 'cpu' registers in the JVM:
 typedef struct __contextDef {
@@ -42,6 +36,7 @@ typedef struct __contextDef {
 	// The position at the stack from where the previous context can be pop'ed:
 	u2 contextPointer;
 	u2 flags;
+	BOOL exceptionThrown;
 } contextDef;
 
 extern contextDef context;
@@ -84,8 +79,9 @@ void singleStep(void);
  * This method will reset the VM. Shall be called once upon program start.
  * \param heap A pointer to the memory area where the heap will be placed
  * \param heapSize The size of the heap area
+ * \param stackSize The size of a thread stack in bytes
  */
-void resetVM(void* heap, size_t heapSize);
+void resetVM(align_t* heap, size_t heapSize, size_t stackSize);
 
 /*
  * This method dumps a stack trace of current (thread)..
@@ -104,9 +100,28 @@ void toggleBreakpoint(codeIndex addr);
  */
 BOOL isBreakpoint(codeIndex addr);
 
+
+/**
+ * This function clears the supplied context and set the class id and start address in the context
+ * \param context A pointer to the instance to be initialized
+ * \param classId Identification of the class to start execution in
+ * \param startAddress Start address of byte code to execute
+ */
+void clearContext(contextDef* context, u2 classId, codeIndex startAddress);
+
+
+/**
+ * \return true if scheduling is enabled
+ */
+BOOL frIsSchedulingEnabled();
+
+/**
+ * This method enables scheduling.
+ */
+void frStartScheduling();
+
 #ifdef  __cplusplus
 }
 #endif
-
 
 #endif /* FRAME_H_ */

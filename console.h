@@ -15,6 +15,11 @@
 void consout(char * format, ...);
 
 /**
+ * This works as consout but prepend the line with source identification
+ */
+#define consoutli(args...) do { consout("%s:%d ", __FILE__, __LINE__); consout(args); } while (0)
+
+/**
  * To be implemented by target platform code. Prints the supplied character on stdout
  */
 

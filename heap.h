@@ -12,7 +12,8 @@
 #include "config.h"
 #include "operandstack.h"
 
-#define HEAP_MAGIC 0x5F89
+//#define USED_HEAP_MAGIC 0x5F89
+//#define FREE_HEAP_MAGIC 0xf27b
 
 typedef struct __heapElement {
 	//int magic;
@@ -47,67 +48,30 @@ typedef struct __gcStat {
 } gcStat;
 
 /**
- * The header of an array on heap:
- */
-typedef struct __arrayheader {
-	// The number of elements in the array.
-	jint length;
-
-	// The type of the elements in the array - only valid for object arrays:
-	u2 elementClassId;
-
-} arrayheader;
-
-/**
- * This struct contains an array on the heap
- */
-typedef struct __array {
-	// The header of the array (when splitting the array declaration in this manner its up to the compiler
-	// to ensure proper alignment of field 'data' - e.g. the ARM architecture cannot accept pointers which
-	// is not placed on a 4 - aligned address):
-	arrayheader header;
-
-	// The element data:
-	u1 data[];
-} array;
-
-/**
- * This method returns the classId for an object
- * \param p A pointer to the java object for which the class id has to be returned
- * \returns The class id of p
- */
-u2 getClassIdFromObject(jobject p);
-
-/**
- * This method allocates a java object on the heap
- * \param size The size of the java object - in count of 'stackable's
+ * This method allocates a java object on the heap. The payload is cleared.
+ * \param size The size of the java object - in count of sizeof(stackable)
  * \param classId The identification the class contained in the object
+ * \return The allocated object. NB! Use appropriate methods for access; do not use the
+ * returned pointer directly!
  */
-jobject heapAllocObject(u2 size, u2 classId);
+jobject heapAllocObjectByStackableSize(u2 size, u2 classId);
 
 /**
- * This method allocates an array of simple types on the heap
- * \param count The number of elements
- * \param classId The id of array class
- * \param size The size of a single array element
- * \return The allocated object or null, if out of mem has been thrown
+ * This method allocates a java object on the heap. The payload is cleared.
+ * \param size The size of the java object - in count of bytes
+ * \param classId The identification the class contained in the object
+ * \return The allocated object. NB! Use appropriate methods for access; do not use the
+ * returned pointer directly!
  */
-jobject heapAllocPrimitiveTypeArray(jint count, size_t size, u2 classId);
+jobject heapAllocObjectByByteSize(u2 size, u2 classId);
 
-/**
- * This method allocates an array on the heap
- * \param count The number of elements
- * \param elementClassId The id of array elements
- * \return The allocated object
- */
-jobject heapAllocObjectArray(jint count, u2 elementClassId);
 
 /**
  * This method initializes the heap
  * \param heap A pointer to the memory area where the heap will be placed
- * \param heapSize The size of the heap area
+ * \param heapSize The size of the heap area (in count of align_t)
  */
-void heapInit(void* heap, size_t heapSize);
+void heapInit(align_t* heap, size_t heapSize);
 
 /**
  * This method executes simple garbage collection using mark and sweep algorithm.
@@ -127,11 +91,9 @@ void getHeapStat(heapListStat* usedStat, heapListStat* freeStat, gcStat* gc);
  * for garbage collection, it will not be garbage collected. It shal be set to NULL, when no object shall
  * be protected.
  * \param jref The object to protect, or null, if no object shall be protected.
+ * \param protected true, if the object shall be protected, false otherwise
  */
-void heapProtect(jobject jref);
-
-#define HEAP_ELEMENT_TO_OBJECT_REF(E) ((jobject) (((void *) E) + sizeof(heapElement)))
-#define OBJECT_REF_TO_HEAP_ELEMENT(R) ((heapElement*) (((void*) R) - sizeof(heapElement)))
+void heapProtect(jobject jref, BOOL protected);
 
 void validateStackables(stackable* memory, size_t length);
 

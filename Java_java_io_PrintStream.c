@@ -8,15 +8,17 @@
 #include "jni.h"
 #include "heap.h"
 #include "console.h"
-
+#include "constantpool.h"
+#include "vmids.h"
 
 void JNICALL Java_java_io_PrintStream_outString(JNIEnv *env, jobject this, jstring s) {
-	stackable* val = (stackable*) s;
+	u2 linkId = LINK_ID_java_lang_String_value__C;
+	jcharArray charArray = (jcharArray) GetObjectField(s, linkId);
 
-	array* a = (array*) (val->operand.jref);
-	int i;
-	for (i = 0; i < a->header.length; i++) {
-		consout("%c", a->data[i]);
+	size_t length = GetArrayLength(charArray);
+	size_t i;
+	for (i = 0; i < length; i++) {
+		consout("%c", GetCharArrayElement(charArray, i));
 	}
 }
 

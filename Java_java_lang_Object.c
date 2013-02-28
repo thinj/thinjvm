@@ -9,32 +9,29 @@
 
 #include "console.h"
 #include "heap.h"
+#include "heaplist.h"
 
 #include "jni.h"
+#include "objectaccess.h"
+#include "vmids.h"
 
 jint Java_java_lang_Object_hashCode(void *context, jobject this) {
 	return (jint) this;
 }
 
 jobject JNICALL Java_java_lang_Object_getClass(JNIEnv *env, jobject this) {
-	u2 classId = getClassIdFromObject(this);
-
-	array* a = (array*) javaLangClassArray;
-
-	jclass* oa = (jclass*) &a->data[0];
+	u2 classId = oaGetClassIdFromObject(this);
 
 	// Find Class instance that has classId 'classId':
 	int i;
 	jobject class = NULL;
-	for (i = 0; i < a->header.length && class == NULL; i++) {
-		jobject classObject = oa[i];
+	int len = GetArrayLength(javaLangClassArray);
+	u2 aClassIdLinkId = LINK_ID_java_lang_Class_aClassId_I;
+	for (i = 0; i < len && class == NULL; i++) {
+		jobject classObject = GetObjectArrayElement(javaLangClassArray, i);
 
-		stackable* val = (stackable*) classObject;
-		if (val->type != JAVAINT) {
-			consout("JAVAINT expected; got %d\n", val->type);
-			jvmexit(1);
-		}
-		jint classObjectDotaClassId = val->operand.jrenameint;
+		jint classObjectDotaClassId = GetIntField(classObject, aClassIdLinkId);
+
 		if (classObjectDotaClassId == (jint) classId) {
 			class = classObject;
 		}

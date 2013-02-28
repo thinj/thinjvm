@@ -8,10 +8,14 @@
 #include <stdlib.h>
 #include "console.h"
 #include "constantpool.h"
+#include "objectaccess.h"
+#include "exceptions.h"
 #include "instructions.h"
 #include "frame.h"
 #include "heap.h"
 #include "trace.h"
+#include "jni.h"
+#include "vmids.h"
 
 #define VALIDATE_CLASS_ID(X) \
 	if (X >= numberOfAllClassInstanceInfo) { \
@@ -33,19 +37,6 @@ static const classInstanceInfoDef* getClassInfo(u2 classId) {
 	VALIDATE_CLASS_ID(classId);
 
 	const classInstanceInfoDef* classInfo = &allClassInstanceInfo[classId];
-	//	int i;
-	//	for (i = 0; classInfo == NULL && i < numberOfAllClassInstanceInfo; i++) {
-	//		if (allClassInstanceInfo[i].classId == classId) {
-	//			classInfo = &allClassInstanceInfo[i];
-	//		}
-	//	}
-	//
-	//	if (classInfo == NULL) {
-	//		consout("Class for id = %d not found\n", classId);
-	//		consout("PC=%04x\n", context.programCounter);
-	//		DUMP_STACKTRACE("class id");
-	//		jvmexit(1);
-	//	}
 
 	END;
 	return classInfo;
@@ -258,11 +249,6 @@ static const methodInClass* getMethodInClass(u2 classId, u2 linkId) {
 	VALIDATE_CLASS_ID(classId);
 	const methodInClass* mic = allConstantPools[classId].methods;
 	size_t len = allConstantPools[classId].numberOfMethods;
-	//		for (i = 0; i < len && res == NULL; i++) {
-	//			if (linkId == mic[i].linkId) {
-	//				res = &mic[i];
-	//			}
-	//		}
 
 	// Search using bi-section; indexing using linkId is not possible
 	int l = 0;
@@ -301,7 +287,7 @@ static const methodInClass* getMethodInClass(u2 classId, u2 linkId) {
 const methodInClass* getVirtualMethodEntryByLinkId(jobject jref, u2 linkId) {
 	BEGIN;
 
-	int referencedClassId = getClassIdFromObject(jref);
+	int referencedClassId = oaGetClassIdFromObject(jref);
 	//printf("classId = %d, obj= %p\n", (int) referencedClassId, jref);
 	//jvmexit(1);
 	// Lookup method in referenced class or in it's super-classes:
@@ -331,7 +317,7 @@ const methodInClass* getVirtualMethodEntryByLinkId(jobject jref, u2 linkId) {
 	//printf("mic found: %d, refclassid = %d\n", found, referencedClassId);
 	if (mic == NULL) {
 		consout("Failed to look up virtual method entry: referencedClass = %d, linkId=%d\n",
-				referencedClassId, linkId);
+				oaGetClassIdFromObject(jref), linkId);
 		jvmexit(1);
 	}
 	END;
@@ -384,10 +370,8 @@ const methodInClass* getVirtualMethodEntry(u2 cp_index) {
 
 	getOperandRelativeToStackPointer((s1) (-argCount), &st);
 
-	if (st.type != OBJECTREF) {
-		consout("OBJECTREF expected; got %d\n", st.type);
-		jvmexit(1);
-	}
+	VALIDATE_TYPE(st.type, OBJECTREF);
+
 	jobject jref = st.operand.jref;
 	const methodInClass* mic;
 	if (jref == 0) {
@@ -458,26 +442,15 @@ const methodInClass* getStaticMethodEntry(u2 classId, u2 cp_index) {
 	//	return mic;
 }
 
-static void getFieldEntry(u2 index, u2* address, u1* size) {
+const fieldInClass* getFieldInClassbyLinkId(u2 classId, u2 linkId) {
+	u2 referencedClassId = classId;
 	int i;
-	int linkId;
-	int referencedClassId;
-
-	const constantPool* cpool = &allConstantPools[context.classIndex];
-    const memberReference* mref = &cpool->fieldReferences[index];
-
-	linkId = mref->linkId;
-	referencedClassId = mref->referencedClassId;
-
-
-	// Now the linkId is established...
 	const fieldInClass* fic = NULL;
 	while (fic == NULL) {
-		cpool = &allConstantPools[referencedClassId];
-	    const fieldInClass* allFields = cpool->fields;
-	    size_t numberOfAllFields = cpool->numberOfFields;
+		const constantPool* cpool = &allConstantPools[referencedClassId];
+		const fieldInClass* allFields = cpool->fields;
+		size_t numberOfAllFields = cpool->numberOfFields;
 		for (i = 0; i < numberOfAllFields && fic == NULL; i++) {
-			// TODO Optimization candidate:
 			if (allFields[i].linkId == linkId) {
 				fic = &allFields[i];
 			}
@@ -492,6 +465,48 @@ static void getFieldEntry(u2 index, u2* address, u1* size) {
 			}
 		}
 	}
+
+	if (fic == NULL) {
+		consout("Failed to look up field entry: classId = %d, linkId=%d\n", classId, linkId);
+		jvmexit(1);
+	}
+
+	return fic;
+}
+
+static void getFieldEntry(u2 index, u2* address, u1* size) {
+	int linkId;
+	int referencedClassId;
+
+	const constantPool* cpool = &allConstantPools[context.classIndex];
+	const memberReference* mref = &cpool->fieldReferences[index];
+
+	linkId = mref->linkId;
+	referencedClassId = mref->referencedClassId;
+
+	// Now the linkId is established...
+	const fieldInClass* fic = getFieldInClassbyLinkId(referencedClassId, linkId);
+	//	const fieldInClass* fic = NULL;
+	//	while (fic == NULL) {
+	//		cpool = &allConstantPools[referencedClassId];
+	//		const fieldInClass* allFields = cpool->fields;
+	//		size_t numberOfAllFields = cpool->numberOfFields;
+	//		for (i = 0; i < numberOfAllFields && fic == NULL; i++) {
+	//			// TODO Optimization candidate:
+	//			if (allFields[i].linkId == linkId) {
+	//				fic = &allFields[i];
+	//			}
+	//		}
+	//		if (fic == NULL) {
+	//			if (referencedClassId != JAVA_LANG_OBJECT_CLASS_ID) {
+	//				// Look in super class:
+	//				referencedClassId = getSuperClass(referencedClassId);
+	//			} else {
+	//				// Already in java.lang.Object; symbol not found.
+	//				break;
+	//			}
+	//		}
+	//	}
 
 	if (fic != NULL) {
 		*address = fic->address;
@@ -578,13 +593,22 @@ void getConstant(u2 constantPoolIndex, constantDef* constant) {
 		}
 	}
 
+	for (i = 0; i < numberOfAllLongConstantReferences && !found; i++) {
+		if (allLongConstantReferences[i].classId == context.classIndex
+				&& allLongConstantReferences[i].constantPoolIndex == constantPoolIndex) {
+			found = TRUE;
+			constant->type = CONSTANT_LONG;
+			constant->value.jlong = allLongConstantReferences[i].value;
+		}
+	}
+
 	if (!found) {
 		for (i = 0; i < numberOfAllStringConstantReferences && !found; i++) {
 			if (allStringConstantReferences[i].classId == context.classIndex
 					&& allStringConstantReferences[i].constantPoolIndex == constantPoolIndex) {
 				found = TRUE;
 				constant->type = CONSTANT_STRING;
-				constant->value.string = allStringConstantReferences[i].value;
+				constant->value.string = (jchar*) allStringConstantReferences[i].value;
 			}
 		}
 	}
@@ -678,7 +702,7 @@ u2 getClassIdForClassType(CLASS_TYPE type) {
 	}
 
 	if (i >= numberOfAllClassInstanceInfo) {
-		consout("Failed to look up type=%d\n", type);
+		consoutli("Failed to look up type=%d\n", type);
 		jvmexit(1);
 	}
 
@@ -686,7 +710,51 @@ u2 getClassIdForClassType(CLASS_TYPE type) {
 }
 
 void generateJavaLangClassInstances() {
-	// TODO This can be heavy optimized (together with the method below)!
+	// Allocate Class[] containing only those classes that are referenced:
+	javaLangClassArray = NewObjectArray((jint) numberOfAllClassInstanceInfo,
+			CLASS_ID_java_lang_Class, NULL);
+
+	if (javaLangClassArray != NULL) {
+		// Don't GC our array of classes:
+		heapProtect(javaLangClassArray, TRUE);
+
+		int i;
+		for (i = 0; i < numberOfAllClassInstanceInfo; i++) {
+			// Simulate: Class cl  = new Class();
+			// TODO NewObject !!!
+			// TODO Lazy load?
+			u2 size;
+			getClassSize(CLASS_ID_java_lang_Class, &size);
+			jobject jc = heapAllocObjectByStackableSize(size, CLASS_ID_java_lang_Class);
+			SetIntField(jc, LINK_ID_java_lang_Class_aClassId_I, i);
+			if (ExceptionCheck()) {
+				break;
+			}
+
+			SetObjectArrayElement(javaLangClassArray, i, jc);
+			if (ExceptionCheck()) {
+				break;
+			}
+		}
+
+		// Set the aAllClasses in java.lang.Class:
+		jclass classInstance = getJavaLangClass(CLASS_ID_java_lang_Class);
+		SetStaticObjectField(classInstance, LINK_ID_java_lang_Class_aAllClasses__Ljava_lang_Class_,
+				javaLangClassArray);
+
+		// No need of protection:
+		heapProtect(javaLangClassArray, FALSE);
+	}
+	// consout("class init done\n");
+
+}
+
+jclass getJavaLangClass(u2 requestedClassId) {
+	// TODO Lazy load ?
+	return (jclass) GetObjectArrayElement(javaLangClassArray, requestedClassId);
+}
+
+void deprecated_generateJavaLangClassInstances() {
 	int i;
 	int j;
 	int arrayLength = 0;
@@ -707,40 +775,58 @@ void generateJavaLangClassInstances() {
 		}
 	}
 
-	// Allocate Class[]:
-	javaLangClassArray = heapAllocObjectArray((jint) arrayLength, javaLangClassClassIndex);
-	array* a = ((array*) javaLangClassArray);
+	consoutli("arrayLength: %d\n", arrayLength);
+	// Allocate Class[] containing only those classes that are referenced:
+	javaLangClassArray = NewObjectArray((jint) arrayLength, CLASS_ID_java_lang_Class, NULL);
 
-	jobject* array = (jobject*) &a->data[0];
-	int arrayIndex = 0;
-	for (i = 0; i < numberOfAllClassReferences; i++) {
-		// The candidate for java.lang.Class generation:
-		u2 classId = allClassReferences[i].targetClassId;
+	if (javaLangClassArray != NULL) {
+		// Don't GC our array of classes:
+		heapProtect(javaLangClassArray, TRUE);
 
-		// Verify that it hasn't been generated before:
-		BOOL found = FALSE;
-		for (j = 0; j < i - 1 && !found; j++) {
-			found = allClassReferences[j].targetClassId == classId;
+		int arrayIndex = 0;
+		u2 aClassIdLinkId = LINK_ID_java_lang_Class_aClassId_I;
+
+		jclass classInstance = NULL;
+
+		for (i = 0; i < numberOfAllClassReferences; i++) {
+			// The candidate for java.lang.Class generation:
+			u2 classId = allClassReferences[i].targetClassId;
+
+			// Verify that it hasn't been generated before:
+			BOOL found = FALSE;
+			for (j = 0; j < i - 1 && !found; j++) {
+				found = allClassReferences[j].targetClassId == classId;
+			}
+
+			if (!found) {
+				// The class instance does not exist yet:
+				// Simulate: Class cl  = new Class();
+				u2 size;
+				getClassSize(CLASS_ID_java_lang_Class, &size);
+				jobject jc = heapAllocObjectByStackableSize(size, CLASS_ID_java_lang_Class);
+				SetIntField(jc, aClassIdLinkId, classId);
+				if (ExceptionCheck()) {
+					break;
+				}
+
+				consoutli("class id: %d\n", classId);
+				if (classId == CLASS_ID_java_lang_Class) {
+					classInstance = jc;
+					consoutli("class: \n");
+				}
+				SetObjectArrayElement(javaLangClassArray, arrayIndex, jc);
+				arrayIndex++;
+			}
 		}
 
-		if (!found) {
-			// The class instance does not exist yet:
-			// Simulate: Class cl  = new Class();
-			u2 size;
-			getClassSize(javaLangClassClassIndex, &size);
-			jobject jc = heapAllocObject(size, javaLangClassClassIndex);
-			// TODO This only works when there is one and only one instance field in java.lang.Class:
-			stackable* val = (stackable*) jc;
-			val->operand.jrenameint = (jint) classId;
-			val->type = JAVAINT;
-
-			array[arrayIndex] = jc;
-			arrayIndex++;
-		}
+		// Set the aAllClasses in java.lang.Class:
+		SetStaticObjectField(classInstance, LINK_ID_java_lang_Class_aAllClasses__Ljava_lang_Class_,
+				javaLangClassArray);
 	}
+	// consout("class init done\n");
 }
 
-jclass getJavaLangClass(u2 requestedClassId) {
+jclass deprecated_getJavaLangClass(u2 requestedClassId) {
 	BEGIN;
 	int i;
 	int j;
@@ -765,43 +851,106 @@ jclass getJavaLangClass(u2 requestedClassId) {
 		}
 	}
 
-	array* a = ((array*) javaLangClassArray);
-	jobject* elements = (jobject*) &a->data[0];
-
-	return elements[index];
+	return (jclass) GetObjectArrayElement(javaLangClassArray, index);
 }
 
-u2 getClassBuildinDependecy(BuildinDependency_e libref) {
-	int i;
-	u2 classId;
-
-	for (i = 0; i < numberOfAllBuildinClassDependencies; i++) {
-		if (AllBuildinClassDependencies[i].libRef == libref) {
-			classId = AllBuildinClassDependencies[i].classId;
-			break;
-		}
+void cpCommonLDC(u2 constantPoolIndex) {
+	// Look up value (int, float or String) from within const pool:
+	constantDef constant;
+	getConstant(constantPoolIndex, &constant);
+	if (constant.type == CONSTANT_INTEGER) {
+		operandStackPushJavaInt(constant.value.jrenameint);
+	} else if (constant.type == CONSTANT_LONG) {
+		operandStackPushJavaLong(constant.value.jlong);
+	} else if (constant.type == CONSTANT_STRING) {
+		//		consout("%s:%d ldc string: %d\n", __FILE__, __LINE__, constantPoolIndex);
+		jobject str = NewString(constant.value.string);
+		operandStackPushObjectRef(str);
+	} else if (constant.type == CONSTANT_CLASS) {
+		//registerNatives skal bygge det Class[], der skal foretages lookup i:
+		jclass jc = getJavaLangClass(constant.value.classId);
+		operandStackPushObjectRef(jc);
+	} else {
+		// TODO Support float
+		consout("Unsupported type: %d\n", constant.type);
+		jvmexit(1);
 	}
-	if (i >= numberOfAllBuildinClassDependencies) {
-		consout("failed to look up standard dependency: %d\n", (int) libref);
+}
+
+/**
+ * This method test if S is 'instanceof' T
+ * \param classId_S The class id of S
+ * \param classId_T The class id of T
+ * \return true, if S is 'instanceof' T; false otherwise.
+ */
+BOOL CP_IsInstanceOf(u2 classId_S, u2 classId_T) {
+	CLASS_TYPE type_T = getClassType(classId_T);
+	CLASS_TYPE type_S = getClassType(classId_S);
+
+	BOOL instanceOf;
+	if (isObjectArray(classId_S) || isPrimitiveValueArray(classId_S)) {
+		if (isObjectArray(classId_T)) {
+			if (isObjectArray(classId_S)) {
+				// Both are object arrays:
+				u2 classId_SC = getArrayElementClassId(classId_S);
+				u2 classId_TC = getArrayElementClassId(classId_T);
+				instanceOf = CP_IsInstanceOf(classId_SC, classId_TC);
+			} else {
+				instanceOf = FALSE;
+			}
+		} else if (isPrimitiveValueArray(classId_T)) {
+			instanceOf = (classId_T == classId_S) ? TRUE : FALSE;
+		} else if (type_T == CT_CLASS) {
+			instanceOf = classId_T == 0 ? TRUE : FALSE;
+		} else {
+			// S shall implement T:
+			if (!is_S_implementing_T(classId_S, classId_T)) {
+				instanceOf = FALSE;
+			} else {
+				instanceOf = TRUE;
+			}
+			consout("not tested, since arrays does not implement any interfaces ... %d\n",
+					instanceOf);
+			jvmexit(1);
+		}
+	} else if (type_S == CT_CLASS) {
+		if (type_T == CT_CLASS) {
+			instanceOf = classId_S == classId_T ? TRUE : FALSE;
+			if (!instanceOf) {
+				instanceOf = is_S_SubClassing_T(classId_S, classId_T);
+			}
+		} else {
+			// S shall implement T:
+			if (!is_S_implementing_T(classId_S, classId_T)) {
+				instanceOf = FALSE;
+			} else {
+				instanceOf = TRUE;
+			}
+		}
+	} else if (type_S == CT_INTERFACE) {
+		// All objects in this VM has a class reference; so we don't support any classes having a class id which
+		// is an interface.
+		// This piece of code is not testable nor tested ;-)
+		consout("not implemented\n");
+		jvmexit(1);
+	} else {
+		consout("not implemented\n");
 		jvmexit(1);
 	}
 
-	return classId;
-}
-u2 getMemberBuildinDependecy(BuildinDependency_e libref) {
-	int i;
-	u2 linkId;
-
-	for (i = 0; i < numberOfAllBuildinMemberDependencies; i++) {
-		if (AllBuildinMemberDependencies[i].libRef == libref) {
-			linkId = AllBuildinMemberDependencies[i].linkId;
-			break;
-		}
-	}
-	if (i >= numberOfAllBuildinMemberDependencies) {
-		consout("failed to look up standard dependency: %d\n", (int) libref);
-		jvmexit(1);
-	}
-
-	return linkId;
+	/*
+	 *i If S is an ordinary (nonarray) class, then:
+	 *i    o If T is a class type, then S must be the same class (§2.8.1) as T or a subclass of T.
+	 *i    o If T is an interface type, then S must implement (§2.13) interface T.
+	 *i If S is an interface type, then:
+	 *-    o If T is a class type, then T must be Object (§2.4.7).
+	 *-    o If T is an interface type, then T must be the same interface as S, or a superinterface of S (§2.13.2).
+	 *  If S is a class representing the array type SC[], that is, an array of components of type SC, then:
+	 *i    o If T is a class type, then T must be Object (§2.4.7).
+	 *i    o If T is an array type TC[], that is, an array of components of type TC, then one of the following must be true:
+	 *i        + TC and SC are the same primitive type (§2.4.1).
+	 *i        + TC and SC are reference types (§2.4.6), and type SC can be cast to TC by these runtime rules.
+	 *(i)  o If T is an interface type, T must be one of the interfaces implemented by arrays (§2.15).
+	 */
+	return instanceOf;
 }

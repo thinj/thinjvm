@@ -10,15 +10,24 @@
 #include <string.h>
 
 #include "types.h"
+#include "heaplist.h"
 #include "heap.h"
 #include "frame.h"
 #include "console.h"
 #include "constantpool.h"
 #include "instructions.h"
 #include "debugger.h"
+#include "vmids.h"
 
 // The JVM 'cpu' registers etc:
 contextDef context;
+
+/**
+ *  Flag for enabling scheduling.
+ *  Shall be set true when java.lang.Thread has changed the way stacks and context shall be accessed.
+ */
+static BOOL aSchedulingEnabled = FALSE;
+
 
 /*
  * Frame layout and registers:
@@ -49,6 +58,7 @@ void pop_frame() {
 	u2 framePointer = operandStackPopU2();
 	context.stackPointer = context.framePointer;
 	context.framePointer = framePointer;
+	// Don't touch context.exceptionThrown
 }
 
 void push_frame(u1 localVariableCount, u2 dstClassIndex, codeIndex dest, BOOL returnFromVM) {
@@ -105,20 +115,14 @@ s2 getS2FromCode(void) {
 	return (s2) msb * 256 + (s2) lsb;
 }
 
-//JNIEXPORT void JNICALL Java_java_lang_Throwable_fillInStackTrace(JNIEnv *env, jobject exception) {
-//	contextDef savedContext = context;
-//	while (context.framePointer > 0) {
-//		consout("pop PC: 0x%04x\n", context.programCounter - 1);
-//		pop_frame();
-//	}
-//	context = savedContext;
-//}
-
 void dumpStackTrace() {
 	contextDef savedContext = context;
 	BOOL addComma = FALSE;
+	consout("context: PC=0x%04x  CID=0x%04x  SP=0x%04x\n", context.programCounter,
+			context.classIndex, context.stackPointer);
 	consout("Internal trace:\n");
-	while (context.framePointer >= 0) {
+	//	while (context.framePointer >= 0) {
+	while (1) {
 		if (addComma) {
 			consout(",");
 		} else {
@@ -192,48 +196,9 @@ BOOL isBreakpoint(codeIndex addr) {
 	return found;
 }
 #endif // USE_DEBUG
-/**
- *  By defining SINGLE_STEP as a macro we save a function call => faster code. Further, getU1FromCode has
- *  been forced in-line => faster code (according to profiling).
- */
-#define SINGLE_STEP() \
-{ \
-	u1 opcode = code[context.programCounter++]; \
-	if (opcode >= numberOfDefinedInstructions) { \
-		consout("%04x: %02x   Unsupported bytecode!\n", context.programCounter - 1, opcode); \
-		consout("SP=%04x PC=%04x FP=%04x\n", context.stackPointer, context.programCounter, \
-				context.framePointer); \
-		dumpStackTrace(); \
-		jvmexit(1); \
-	} \
-	allIns[opcode](); \
-}
-
-void execute(void) {
-	do {
-#ifdef USE_DEBUG
-		if (isBreakpoint(context.programCounter)) {
-			break;
-		}
-#endif // USE_DEBUG
-		//		consout("before validate: pc = %04x\n", context.programCounter);
-		//		validateStackables(stack, context.operandStackPointer);
-		//		consout("before step, after validate: pc = %04x\n", context.programCounter);
-		SINGLE_STEP();
-	} while (!(context.flags & RETURN_FROM_VM));
-
-	// Clear return flag: this is a one-shot:
-	context.flags &= ~RETURN_FROM_VM;
-}
-
-void resetVM(void* heap, size_t heapSize) {
-	// Thread reset:
-	context.programCounter = startAddress;
-	context.classIndex = startClassIndex;
-	context.stackPointer = 0;
-	context.framePointer = 0;
-	context.contextPointer = 0;
-	context.flags = 0;
+void resetVM(align_t* heap, size_t heapSize, size_t stackSize) {
+	// STACK_SIZE is in count of stackables, not bytes:
+	STACK_SIZE = stackSize / sizeof(stackable);
 
 #ifdef USE_DEBUG
 	int i;
@@ -244,14 +209,26 @@ void resetVM(void* heap, size_t heapSize) {
 	// Initialize heap:
 	heapInit(heap, heapSize);
 
-	// initialize stack:
-	stack_init();
-
 	// Clear static area:
 	memset(&staticMemory[0], staticMemorySize, sizeof(stackable));
 
+	// Setup initial context:
+	clearContext(&context, startClassIndex, startAddress);
+
+	// initialize stack:
+	osStackInit();
+
 	// Load all java.lang.Class instances:
 	generateJavaLangClassInstances();
+}
+
+void clearContext(contextDef* context, u2 classId, codeIndex startAddress) {
+	context->programCounter = startAddress;
+	context->classIndex = classId;
+	context->stackPointer = 0;
+	context->framePointer = 0;
+	context->contextPointer = 0;
+	context->flags = 0;
 }
 
 #ifdef USE_DEBUG
@@ -279,3 +256,30 @@ void singleStep(void) {
 	//allInstructions[opcode].ins();
 }
 #endif
+
+
+/**
+ * \return true if scheduling is enabled
+ */
+BOOL frIsSchedulingEnabled() {
+	return aSchedulingEnabled;
+}
+
+/**
+ * This method enables scheduling.
+ */
+void frStartScheduling() {
+	aSchedulingEnabled = TRUE;
+}
+
+// TODO Make time-base!
+static int yieldCount = 0;
+void tryYield() {
+	if (aSchedulingEnabled) {
+		if (yieldCount++ >= 100) {
+			yieldCount = 0;
+			jclass cls = getJavaLangClass(CLASS_ID_java_lang_Thread);
+			Java_java_lang_Thread_yield(NULL, cls);
+		}
+	}
+}

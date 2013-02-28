@@ -10,10 +10,16 @@
 
 #include "thinjvm.h"
 
+
+//#define __DEBUG(x ...)
+//#define __DEBUG consout("%s(%s:%d): ", __FUNCTION__, __FILE__, __LINE__), consout
+
+
+
 //insert heap and stack size in this file
 
 //#define HEAP_SIZE 9000
-#define STACK_SIZE 1000
+//#define STACK_SIZE 2000
 
 
 //#define USE_DEBUG
@@ -28,6 +34,9 @@
 #define DEB(X)
 
 #endif
+
+// For dumpStackTrace prototype:
+#include "frame.h"
 
 #define jvmexit(X) do {if (X) {dumpStackTrace();}  consout("jvmexit %s %d\n", __FILE__, __LINE__); thinjvm_exit(X);} while (0)
 

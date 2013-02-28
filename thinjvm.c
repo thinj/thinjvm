@@ -11,8 +11,8 @@
 #include "frame.h"
 #include "heap.h"
 
-void thinjvm_run(void* heap, size_t heapSize) {
-	resetVM(heap, heapSize);
+void thinjvm_run(align_t* heap, size_t heapSize, size_t stackSize) {
+	resetVM(heap, heapSize, stackSize);
 
 	push_frame(0, startClassIndex, startAddress, TRUE);
 

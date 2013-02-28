@@ -9,6 +9,10 @@
 #include "config.h"
 #include "types.h"
 
+// This c-file shall not be used when running native GCC (in contrast to cross-compiling GCC); when
+// using native GCC it's up to GCC to link in the correct low level functions.
+
+#ifndef OMIT_STDLIB
 void *memcpy(void *s1, const void * s2, size_t n) {
 	void *org = s1;
 	while (n-- > 0) {
@@ -19,9 +23,21 @@ void *memcpy(void *s1, const void * s2, size_t n) {
 }
 
 void *memset(void *s1, int c, size_t len) {
+	////	consout("%s:%d c = %d, len = %d\n", __FILE__, __LINE__, c, len);
+	//	size_t i;
+	//	for (i = 0; i < len; i++) {
+	//		if ((i & 0xff) == 0xff) {
+	//			thinj_putchar('*');
+	//		}
+	////		consout("%s:%d i = %d\n", __FILE__, __LINE__, i);
+	//		char*cp = s1 + i;
+	//		*cp = (char)c;
+	//	}
+	//	thinj_putchar('\n');
+	////	consout("%s:%d c = %d, len = %d\n", __FILE__, __LINE__, c, len);
 	void *org = s1;
 	while (len-- > 0) {
-		*((unsigned char*)s1++) = (unsigned char) c;
+		*((unsigned char*) s1++) = (unsigned char) c;
 	}
 
 	return org;
@@ -129,12 +145,144 @@ int __modsi3(register int a, register int n) {
 	if (n < 0) {
 		n = -n;
 	}
-	int modulus = a - n * __divsi3(a , n);
+	int modulus = a - n * __divsi3(a, n);
 	if (negative) {
 		modulus = -modulus;
 	}
 	return modulus;
 }
+
+////////////////////////////////////////////////////////////////////
+// 64 bit math
+////////////////////////////////////////////////////////////////////
+typedef union __u8u4 {
+	struct {
+		u8 lo;
+	} asU8;
+	struct {
+		u4 lo;
+		u4 hi;
+	} asU4;
+} u8u4;
+
+s8 __ashldi3(s8 u, int shift) {
+	// Arith shift left
+	u8u4 x;
+	x.asU8.lo = u;
+
+	shift = shift & 0x3f;
+	while (shift != 0) {
+		x.asU4.hi <<= 1;
+		if ((x.asU4.lo & 0x80000000) != 0) {
+			x.asU4.hi |= 1;
+		}
+		x.asU4.lo <<= 1;
+		shift--;
+	}
+
+	return x.asU8.lo;
+}
+
+s8 __ashrdi3(s8 u, int shift) {
+	// Arithmetic shift right
+	u8u4 x;
+	x.asU8.lo = u;
+
+	shift = shift & 0x3f;
+	u4 sign = x.asU4.hi & 0x80000000;
+	while (shift != 0) {
+		x.asU4.lo >>= 1;
+		if ((x.asU4.hi & 1) != 0) {
+			x.asU4.lo |= 0x80000000;
+		}
+		x.asU4.hi = sign | (x.asU4.hi >> 1);
+		shift--;
+	}
+
+	return x.asU8.lo;
+}
+
+s8 __lshrdi3(s8 u, int shift) {
+	// Logic shift right
+	u8u4 x;
+	x.asU8.lo = u;
+
+	shift = shift & 0x3f;
+	while (shift != 0) {
+		x.asU4.lo >>= 1;
+		if ((x.asU4.hi & 1) != 0) {
+			x.asU4.lo |= 0x80000000;
+		}
+		x.asU4.hi = (x.asU4.hi >> 1) & 0x7fffffff;
+		shift--;
+	}
+
+	return x.asU8.lo;
+}
+
+u8 __udivdi3(u8 a, u8 b) {
+	char count = 1;
+
+	if (b == 0) {
+		// Division by zero:
+		jvmexit(1);
+	}
+
+	while ((b < a) && !(b & 0x8000000000000000)) {
+		b <<= 1;
+		count++;
+	}
+
+	u8 res = 0;
+	while (count-- > 0) {
+		res <<= 1;
+		if (a >= b) {
+			a -= b;
+			res++;
+		}
+		b >>= 1;
+	}
+
+	return res;
+}
+
+s8 __divdi3(s8 a, s8 b) {
+	unsigned char negative = FALSE;
+	if (a < 0) {
+		a = -a;
+		negative = !negative;
+	}
+	if (b < 0) {
+		b = -b;
+		negative = !negative;
+	}
+
+	u8 res = __udivdi3(a, b);
+	return negative ? -res : res;
+}
+
+u8 __moddi3(u8 a, u8 n) {
+	//	return 7;
+	// From wiki:
+	// (...)Use truncated division where the quotient is defined by truncation q = trunc(a/n),
+	// in other words it is the first integer in the direction of 0 from the exact rational
+	// quotient, and the remainder by r = a − n x q.
+	unsigned char negative = FALSE;
+	if (a < 0) {
+		a = -a;
+		negative = TRUE;
+	}
+	if (n < 0) {
+		n = -n;
+	}
+	s8 modulus = a - n * __divdi3(a, n);
+	if (negative) {
+		modulus = -modulus;
+	}
+	return modulus;
+}
+
+#endif
 
 #if JUST_TESTING
 #include "types.h"

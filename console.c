@@ -13,12 +13,63 @@
 #include "types.h"
 #include "debugger.h"
 
+
+/**
+ * This method prints a decimal long (8 bytes)
+ */
+static void common_print_d(char prefix, size_t size, s8 value, s8 limit, int remaining_digits) {
+	BOOL in_number = FALSE;
+	if (value < 0) {
+		thinj_putchar('-');
+		value = -value;
+		if (size) {
+			size--;
+		}
+	}
+
+	while (limit > 0) {
+		if (limit == 1) {
+			in_number = TRUE;
+		}
+		if (value >= limit) {
+			thinj_putchar(value / limit + '0');
+			value = value % limit;
+			in_number = TRUE;
+			if (size) {
+				size--;
+			}
+		} else if (in_number) {
+			thinj_putchar(value / limit + '0');
+			if (size) {
+				size--;
+			}
+		} else if (size >= remaining_digits) {
+			thinj_putchar(prefix);
+			size--;
+		}
+		remaining_digits--;
+		limit /= 10;
+	}
+
+}
+
+
+/**
+ * This method prints a decimal s8
+ */
+static void print_ld(char prefix, size_t size, s8 value) {
+	// 0xffffffffffffffff = 18446744073709551615
+	// 0x7fffffffffffffff = 9223 3720 3685 4775 807
+	common_print_d(prefix, size, (s8) value, 1000000000000000000, 19);
+}
 /**
  * This method prints a decimal int
  */
 static void print_d(char prefix, size_t size, int value) {
-	int limit = 1000000000; // 32 bit int
-	int remaining_digits = 10;
+//	int limit = 1000000000; // 32 bit int
+//	int remaining_digits = 10;
+	common_print_d(prefix, size, (s8) value, 1000000000, 10);
+	/*
 	BOOL in_number = FALSE;
 	if (value < 0) {
 		thinj_putchar('-');
@@ -50,6 +101,7 @@ static void print_d(char prefix, size_t size, int value) {
 		remaining_digits--;
 		limit /= 10;
 	}
+	*/
 }
 
 static const char* HEX_CHAR = "0123456789abcdef";
@@ -154,6 +206,17 @@ void consout(char * format, ...) {
 			break;
 		case TYPE:
 			switch (*format) {
+			case 'l': {
+				format++;
+				switch (*format) {
+				case 'd': {
+					s8 value = va_arg(args, s8);
+					print_ld(prefix, size, value);
+					break;
+				}
+				}
+				break;
+			}
 			case 'd': {
 				int value = va_arg(args, int);
 				print_d(prefix, size, value);
@@ -162,12 +225,13 @@ void consout(char * format, ...) {
 			case 'p': {
 				print_cp(prefix, size, "0x");
 				// Platform dependent:
-				unsigned int value = (int) va_arg(args, void*);
+				unsigned int value = (unsigned int) va_arg(args, void*);
+				//unsigned int value = (unsigned int) va_arg(args, unsigned int);
 				print_x(' ', 0, value);
 				break;
 			}
 			case 'x': {
-				unsigned int value = va_arg(args, unsigned int);
+				unsigned int value = (unsigned int) va_arg(args, unsigned int);
 				print_x(prefix, size, value);
 				break;
 			}
